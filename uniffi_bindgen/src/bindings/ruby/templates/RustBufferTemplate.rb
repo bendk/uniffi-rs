@@ -190,3 +190,5 @@ module UniFFILib
     end
   end
 end
+
+private_constant :UniFFILib

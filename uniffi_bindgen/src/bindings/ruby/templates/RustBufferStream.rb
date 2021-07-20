@@ -261,3 +261,5 @@ class RustBufferStream
     value[0]
   end
 end
+
+private_constant :RustBufferStream

@@ -47,6 +47,9 @@ ERROR_MODULE_TO_READER_METHOD = {
 {%- endfor %}
 }
 
+private_constant :ERROR_MODULE_TO_READER_METHOD, :CALL_SUCCESS, :CALL_ERROR, :CALL_PANIC,
+                 :RustCallStatus
+
 def self.consume_buffer_into_error(error_module, rust_buffer)
   rust_buffer.consumeWithStream do |stream|
     reader_method = ERROR_MODULE_TO_READER_METHOD[error_module]
@@ -92,3 +95,5 @@ def self.rust_call_with_error(error_module, fn_name, *args)
     raise InternalError, "Unknown call status: #{status.code}"
   end
 end
+
+private_class_method :consume_buffer_into_error

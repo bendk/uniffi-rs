@@ -80,6 +80,10 @@ class TestCoverall < Test::Unit::TestCase
       Coverall::Coveralls.panicing_new('expected panic: woe is me')
     end
 
+    assert_raise_message 'Rust panic' do
+      Coverall::Coveralls.panicing_new('Rust panic')
+    end
+
     begin
       objects = 10.times.map { Coverall::Coveralls.new 'c1' }
       assert_equal 12, Coverall.get_num_alive
