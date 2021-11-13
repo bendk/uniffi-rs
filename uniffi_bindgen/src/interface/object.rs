@@ -66,8 +66,8 @@ use anyhow::{bail, Result};
 use super::attributes::{ConstructorAttributes, InterfaceAttributes, MethodAttributes};
 use super::ffi::{FFIArgument, FFIFunction, FFIType};
 use super::function::Argument;
-use super::types::{rewrite_generic, IterTypes, Type, TypeIterator};
-use super::{APIConverter, ComponentInterface, DecoratorMethod, DecoratorObject};
+use super::types::{IterTypes, Type, TypeIterator};
+use super::{APIConverter, ComponentInterface};
 
 /// An "object" is an opaque type that can be instantiated and passed around by reference,
 /// have methods called on it, and so on - basically your classic Object Oriented Programming
@@ -87,7 +87,7 @@ use super::{APIConverter, ComponentInterface, DecoratorMethod, DecoratorObject};
 pub struct Object {
     pub(super) name: String,
     pub(super) constructors: Vec<Constructor>,
-    pub(super) decorator_type: Option<Type>,
+    pub(super) decorator_name: Option<String>,
     pub(super) methods: Vec<Method>,
     pub(super) ffi_func_free: FFIFunction,
     pub(super) uses_deprecated_threadsafe_attribute: bool,
@@ -98,7 +98,7 @@ impl Object {
         Object {
             name,
             constructors: Default::default(),
-            decorator_type: Default::default(),
+            decorator_name: Default::default(),
             methods: Default::default(),
             ffi_func_free: Default::default(),
             uses_deprecated_threadsafe_attribute: false,
@@ -113,8 +113,8 @@ impl Object {
         Type::Object(self.name.clone())
     }
 
-    pub fn decorator_type(&self) -> Option<Type> {
-        self.decorator_type.clone()
+    pub fn decorator_name(&self) -> Option<String> {
+        self.decorator_name.clone()
     }
 
     pub fn constructors(&self) -> Vec<&Constructor> {
@@ -230,14 +230,8 @@ impl APIConverter<Object> for weedle::InterfaceDefinition<'_> {
                 _ => bail!("no support for interface member type {:?} yet", member),
             }
         }
-        // Finally, add the decorator object.
-        if let Some(nm) = attributes.get_decorator_object() {
-            object.decorator_type = ci
-                .get_type(nm)
-                // No type has been declared of this name, but
-                // we let check_validity() detect and report the error.
-                .or_else(|| Some(Type::DecoratorObject(nm.into())));
-        }
+        // Finally, add the decorator name.
+        object.decorator_name = attributes.get_decorator_name().map(|s| s.to_owned());
         Ok(object)
     }
 }
@@ -386,34 +380,6 @@ impl Method {
         self.return_type.as_ref()
     }
 
-    fn decorator_method<'a>(
-        &self,
-        decorator_object: &Option<&'a DecoratorObject>,
-    ) -> Option<&'a DecoratorMethod> {
-        if decorator_object.is_none() || !self.uses_decorator_method() {
-            None
-        } else {
-            let decorator_object = decorator_object.unwrap();
-            let dm = self.decorator_method_name().unwrap();
-            decorator_object.find_method(&dm)
-        }
-    }
-
-    pub fn decorated_return_type(
-        &self,
-        decorator_object: &Option<&DecoratorObject>,
-    ) -> Option<Type> {
-        if let Some(dm) = self.decorator_method(decorator_object) {
-            match (dm.return_type(), self.return_type()) {
-                (Some(dmt), _) if !dmt.is_generic() => Some(dmt.clone()),
-                (Some(dmt), Some(t)) => Some(rewrite_generic(dmt, t)),
-                _ => None,
-            }
-        } else {
-            self.return_type().cloned()
-        }
-    }
-
     pub fn ffi_func(&self) -> &FFIFunction {
         &self.ffi_func
     }
@@ -426,17 +392,6 @@ impl Method {
         self.attributes
             .get_throws_err()
             .map(|name| Type::Error(name.to_owned()))
-    }
-
-    pub fn decorated_throws_type(
-        &self,
-        decorator_object: &Option<&DecoratorObject>,
-    ) -> Option<Type> {
-        if let Some(dm) = self.decorator_method(decorator_object) {
-            dm.throws_type()
-        } else {
-            self.throws_type()
-        }
     }
 
     pub fn takes_self_by_arc(&self) -> bool {

@@ -22,9 +22,8 @@
 ### What's New
 
 - [Decorator objects](docs/manual/src/udl/decorators.md) reduce boiler plate in Foreign Language bindings.
-  - `[Decorator]` declares an `interface` of decorator functions
-  - `[Decorator=]` adds a decorator to an `interface`
-  - `[CallsWith=]` directs method calls through a decorator function.
+  - `[Decorator=]` links an interface to a decorator class
+  - `[CallsWith=]` directs method calls through a decorator method
 
 [All changes in [[UnreleasedVersion]]](https://github.com/mozilla/uniffi-rs/compare/v0.14.1...main).
 

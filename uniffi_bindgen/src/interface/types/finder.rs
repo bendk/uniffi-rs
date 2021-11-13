@@ -64,8 +64,6 @@ impl TypeFinder for weedle::InterfaceDefinition<'_> {
             types.add_type_definition(self.identifier.0, Type::Enum(name))
         } else if attrs.contains_error_attr() {
             types.add_type_definition(self.identifier.0, Type::Error(name))
-        } else if attrs.is_decorator() {
-            types.add_type_definition(self.identifier.0, Type::DecoratorObject(name))
         } else {
             types.add_type_definition(self.identifier.0, Type::Object(name))
         }

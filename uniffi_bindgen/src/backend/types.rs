@@ -43,12 +43,6 @@ pub trait CodeType {
     /// method signatures and property declarations.
     fn type_label(&self, oracle: &dyn CodeOracle) -> String;
 
-    /// The language specific label used to reference this type. This will be used in
-    /// method signatures and property declarations.
-    fn type_t_label(&self, oracle: &dyn CodeOracle, _t: &str) -> String {
-        self.type_label(oracle)
-    }
-
     /// A representation of this type label that can be used as part of another
     /// identifier. e.g. `read_foo()`, or `FooInternals`.
     ///
@@ -185,10 +179,6 @@ impl<T: CodeTypeDispatch> CodeType for T {
     // This allows for simpler template code (`field|lower` instead of `field.type_()|lower`)
     fn type_label(&self, oracle: &dyn CodeOracle) -> String {
         self.code_type_impl(oracle).type_label(oracle)
-    }
-
-    fn type_t_label(&self, oracle: &dyn CodeOracle, t: &str) -> String {
-        self.code_type_impl(oracle).type_t_label(oracle, t)
     }
 
     fn canonical_name(&self, oracle: &dyn CodeOracle) -> String {

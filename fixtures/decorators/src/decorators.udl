@@ -1,12 +1,5 @@
 namespace decorators {};
 
-[Decorator]
-interface MyDecorator {
-  Any? with_return();
-  void string_saver();
-  i32  with_counter();
-};
-
 [Decorator=MyDecorator]
 interface RustObject {
   constructor();

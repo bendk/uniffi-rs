@@ -36,9 +36,7 @@ pub(super) enum Attribute {
     External(String),
     // Something hand-written in this crate which wraps a primitive type.
     Wrapped,
-    // Decorator objects are methods used to dispatch generated methods. e.g. catchAll and async
-    // They only exist on the foreign language side.
-    DecoratorObject,
+    // Used to specify decorators for interfaces
     WithDecoratorObject(String),
     WithDecoratorMethod(String),
 }
@@ -67,7 +65,6 @@ impl TryFrom<&weedle::attribute::ExtendedAttribute<'_>> for Attribute {
                 "Error" => Ok(Attribute::Error),
                 "Threadsafe" => Ok(Attribute::Threadsafe),
                 "Wrapped" => Ok(Attribute::Wrapped),
-                "Decorator" => Ok(Attribute::DecoratorObject),
                 _ => anyhow::bail!("ExtendedAttributeNoArgs not supported: {:?}", (attr.0).0),
             },
             // Matches assignment-style attributes like ["Throws=Error"]
@@ -265,13 +262,7 @@ impl InterfaceAttributes {
             .any(|attr| matches!(attr, Attribute::Threadsafe))
     }
 
-    pub fn is_decorator(&self) -> bool {
-        self.0
-            .iter()
-            .any(|attr| matches!(attr, Attribute::DecoratorObject))
-    }
-
-    pub(super) fn get_decorator_object(&self) -> Option<&str> {
+    pub(super) fn get_decorator_name(&self) -> Option<&str> {
         self.0.iter().find_map(|attr| match attr {
             // This will hopefully return a helpful compilation error
             // if the decorator method is not defined.
@@ -290,7 +281,6 @@ impl TryFrom<&weedle::attribute::ExtendedAttributeList<'_>> for InterfaceAttribu
             Attribute::Enum => Ok(()),
             Attribute::Error => Ok(()),
             Attribute::Threadsafe => Ok(()),
-            Attribute::DecoratorObject => Ok(()),
             Attribute::WithDecoratorObject(_) => Ok(()),
             _ => bail!(format!("{:?} not supported for interface definition", attr)),
         })?;
@@ -569,10 +559,6 @@ mod test {
 
     #[test]
     fn test_decorator() -> Result<()> {
-        let (_, node) = weedle::attribute::ExtendedAttribute::parse("Decorator").unwrap();
-        let attr = Attribute::try_from(&node)?;
-        assert!(matches!(attr, Attribute::DecoratorObject));
-
         let (_, node) =
             weedle::attribute::ExtendedAttribute::parse("Decorator=MyDecoratorProtocol").unwrap();
         let attr = Attribute::try_from(&node)?;
@@ -782,16 +768,6 @@ mod test {
         assert_eq!(
             err.to_string(),
             "ByRef not supported for interface definition"
-        );
-
-        let (_, node) = weedle::attribute::ExtendedAttributeList::parse(
-            "[Decorator=MyDecoratorObject, Decorator]",
-        )
-        .unwrap();
-        let err = InterfaceAttributes::try_from(&node).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            "conflicting attributes on interface definition"
         );
     }
 

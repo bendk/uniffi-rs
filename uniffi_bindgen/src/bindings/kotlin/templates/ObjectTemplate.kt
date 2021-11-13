@@ -1,24 +1,13 @@
 {% import "macros.kt" as kt %}
 {%- let obj = self.inner() %}
-{%- let dobj = self.decorator_object() %}
-public interface {{ obj.name()|class_name_kt }}Interface {
-    {% for meth in obj.methods() -%}
-    fun {{ meth.name()|fn_name_kt }}({% call kt::arg_list_decl(meth) %})
-    {%- match meth.decorated_return_type(dobj) -%}
-    {%- when Some with (return_type) %}: {{ return_type|type_kt -}}
-    {%- else -%}
-    {%- endmatch %}
-    {% endfor %}
-}
-
 class {{ obj.name()|class_name_kt }}(
     pointer: Pointer
-    {%- match inner.decorator_type() %}
-    {%- when Some with (d) %},
-    internal val {{ d|type_kt|var_name_kt }}: {{ d|type_kt }}<{{ obj.name()|class_name_kt }}>
+    {%- match inner.decorator_name() %}
+    {%- when Some with (name) %},
+    internal val {{ name|var_name_kt }}: {{ name|class_name_kt }}
     {%- else %}
     {%- endmatch %}
-) : FFIObject(pointer), {{ obj.name()|class_name_kt }}Interface {
+) : FFIObject(pointer) {
         {%- match obj.primary_constructor() %}
         {%- when Some with (cons) %}
     constructor({% call constructor_args_decl(cons) -%}) :
@@ -48,11 +37,11 @@ class {{ obj.name()|class_name_kt }}(
     }
 
     {% for meth in obj.methods() -%}
-    override fun {{ meth.name()|fn_name_kt }}({% call kt::arg_list_protocol(meth) %}) =
+    fun {{ meth.name()|fn_name_kt }}({% call kt::arg_list_decl(meth) %}) =
         {%- match meth.decorator_method_name() -%}
-        {%- when Some with (nm) %}
-            {%- match obj.decorator_type() %}{%- when Some with (decorator_type) %}{{ decorator_type|type_kt|var_name_kt }}{% else %}{% endmatch -%}
-                .{{ nm|fn_name_kt }}(this) {
+        {%- when Some with (decorator_method) %}
+            {%- match obj.decorator_name() %}{%- when Some with (decorator_name) %}{{ decorator_name|var_name_kt }}{% else %}{% endmatch -%}
+                .{{ decorator_method|fn_name_kt }} {
             {% call method_body(meth) %}
         }
         {% else %}
@@ -61,7 +50,7 @@ class {{ obj.name()|class_name_kt }}(
     {% endfor %}
 
     companion object {
-        {%- if dobj.is_none() %}
+        {%- if obj.decorator_name().is_none() %}
         internal fun lift(ptr: Pointer): {{ obj.name()|class_name_kt }} {
             return {{ obj.name()|class_name_kt }}(ptr)
         }
@@ -94,10 +83,9 @@ callWithPointer {
 {% endmacro -%}
 
 {% macro constructor_args_decl(cons) %}
-{% match obj.decorator_type() %}
-    {%- when Some with (decorator_type) %}
-        {%- let decorator_name = decorator_type|type_kt|var_name_kt %}
-        {{- decorator_name }}: {{ decorator_type|type_kt -}}<{{ obj.name()|class_name_kt }}>
+{% match obj.decorator_name() %}
+    {%- when Some with (decorator_name) %}
+        {{- decorator_name|var_name_kt }}: {{ decorator_name|class_name_kt -}}
         {%- if cons.arguments().len() != 0 %}, {% endif %}
         {%- call kt::arg_list_decl(cons) -%}
     {%- else %}
@@ -106,10 +94,9 @@ callWithPointer {
 {% endmacro %}
 
 {% macro super_constructor_args(cons) %}
-{% match obj.decorator_type() %}
-    {%- when Some with (decorator_type) %}
-        {%- let decorator_name = decorator_type|type_kt|var_name_kt %}
-        {%- call kt::to_ffi_call(cons) %}, {{ decorator_name }}
+{% match obj.decorator_name() %}
+    {%- when Some with (decorator_name) %}
+        {%- call kt::to_ffi_call(cons) %}, {{ decorator_name|var_name_kt }}
     {%- else %}
         {%- call kt::to_ffi_call(cons) %}
     {%- endmatch %}

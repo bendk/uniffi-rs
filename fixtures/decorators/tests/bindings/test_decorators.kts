@@ -4,21 +4,7 @@
 
 import uniffi.decorators.*
 
-/// MyDecorator is defined in the UDL file. It generates an interface.
-/// Implementations of the interface never cross the FFI boundary, and so
-/// can contain arbitrary Kotlin.
-class Decorator : MyDecorator<RustObject> {
-    var count = 0
-    var lastString: String? = null
-
-    override fun <T> withReturn(obj: RustObject, thunk: () -> T): T = thunk()
-    override fun <T> stringSaver(obj: RustObject, thunk: () -> T) {
-        lastString = thunk() as? String
-    }
-    override fun <T> withCounter(obj: RustObject, thunk: () -> T): Int = thunk().let { ++count }
-}
-
-val decorator = Decorator()
+val decorator = MyDecorator()
 // Decorators are given to the rust object via a constructor.
 val rustObj0 = RustObject(decorator)
 

@@ -10,7 +10,7 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::interface::ComponentInterface;
 use crate::MergeWith;
@@ -22,7 +22,7 @@ pub mod swift;
 
 /// Enumeration of all foreign language targets currently supported by this crate.
 ///
-/// The functions in this module will decorator to a language-specific backend based
+/// The functions in this module will delegate to a language-specific backend based
 /// on the provided `TargetLanguage`. For convenience of calling code we also provide
 /// a few `TryFrom` implementations to help guess the correct target language from
 /// e.g. a file extension of command-line argument.
@@ -131,13 +131,14 @@ pub fn compile_bindings<P>(
     ci: &ComponentInterface,
     out_dir: P,
     language: TargetLanguage,
+    extra_files: &Vec<PathBuf>,
 ) -> Result<()>
 where
     P: AsRef<Path>,
 {
     let out_dir = out_dir.as_ref();
     match language {
-        TargetLanguage::Kotlin => kotlin::compile_bindings(&config.kotlin, ci, out_dir)?,
+        TargetLanguage::Kotlin => kotlin::compile_bindings(&config.kotlin, ci, out_dir, extra_files)?,
         TargetLanguage::Swift => swift::compile_bindings(&config.swift, ci, out_dir)?,
         TargetLanguage::Python => (),
         TargetLanguage::Ruby => (),
