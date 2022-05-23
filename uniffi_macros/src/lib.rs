@@ -10,7 +10,7 @@
 use quote::{format_ident, quote};
 use std::env;
 use std::path::PathBuf;
-use syn::{bracketed, punctuated::Punctuated, spanned::Spanned, LitStr, Token};
+use syn::{Attribute, bracketed, punctuated::Punctuated, spanned::Spanned, LitStr, Token, visit_mut::VisitMut};
 
 use uniffi_bindgen::{
     interface::ComponentInterface,
@@ -195,6 +195,8 @@ pub fn declare_interface(
         .expect("Failed to generated Rust scaffolding");
     let scaffolding: syn::File =
         syn::parse_str(scaffolding.as_str()).expect("Failed to parse generated Rust scaffolding");
+
+    UniFFIInterfaceVisitor.visit_item_mod_mut(&mut module);
     // Append the generated scaffolding to the inline module.
     // Unwrapping is safe because, if the module didn't have content, we wouldn't have parsed it.
     module.content.as_mut().unwrap().1.extend(scaffolding.items);
@@ -215,4 +217,29 @@ pub fn declare_interface(
         #module
         #(#imports)*
     })
+}
+
+
+// Syn visitor that walks modules wrapped in #[uniffi::declare_interface]
+//
+// Curretly the only functionality they have is to remove the `#[uniffi::default]` attributes from
+// the AST so that things compile correctly
+struct UniFFIInterfaceVisitor;
+
+impl VisitMut for UniFFIInterfaceVisitor {
+    fn visit_pat_type_mut(&mut self, pat_type: &mut syn::PatType) {
+        let mut i = 0;
+        while i < pat_type.attrs.len() {
+            if is_uniffi_default(&pat_type.attrs[i]) {
+                pat_type.attrs.remove(i);
+            } else {
+                i += 1;
+            }
+        }
+    }
+}
+
+fn is_uniffi_default(attr: &Attribute) -> bool {
+    let segments = &attr.path.segments;
+    segments.iter().map(|segment| segment.ident.to_string()).eq(std::array::IntoIter::new(["uniffi", "default"]))
 }

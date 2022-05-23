@@ -8,3 +8,7 @@ assert gradient(ln2) == 1
 
 assert intersection(ln1, ln2) == Point(0, 0)
 assert intersection(ln1, ln1) is None
+
+# Test defaults
+assert func_with_default(1) == 1
+assert func_with_default() == 0

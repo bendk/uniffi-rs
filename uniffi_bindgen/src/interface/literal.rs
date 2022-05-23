@@ -126,6 +126,34 @@ pub(super) fn convert_default_value(
     })
 }
 
+pub(super) fn convert_default_value_syn(
+    type_: &Type,
+    default_value: &syn::Lit,
+) -> Result<Literal> {
+    match default_value {
+        syn::Lit::Int(i) => {
+            if i.suffix() != "" {
+                bail!("No support for the non base-10 integers yet");
+            }
+
+            Ok(match type_ {
+                Type::Int8 | Type::Int16 | Type::Int32 | Type::Int64 => Literal::Int(
+                    i.base10_parse()?,
+                    Radix::Decimal,
+                    type_.clone(),
+                ),
+                Type::UInt8 | Type::UInt16 | Type::UInt32 | Type::UInt64 => Literal::UInt(
+                    i.base10_parse()?,
+                    Radix::Decimal,
+                    type_.clone(),
+                ),
+                _ => bail!("Literal type mismatch: {:?} {:?}", type_, default_value),
+            })
+        },
+        _ => bail!("No support for {:?} literals yet", default_value),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;

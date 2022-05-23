@@ -38,7 +38,7 @@ use anyhow::{bail, Result};
 
 use super::attributes::{ArgumentAttributes, FunctionAttributes};
 use super::ffi::{FFIArgument, FFIFunction};
-use super::literal::{convert_default_value, Literal};
+use super::literal::{convert_default_value, convert_default_value_syn, Literal};
 use super::types::Type;
 use super::{APIConverter, ComponentInterface};
 
@@ -257,7 +257,7 @@ impl APIConverter<Argument> for weedle::argument::SingleArgument<'_> {
 impl APIConverter<Argument> for &syn::FnArg {
     fn convert(&self, ci: &mut ComponentInterface) -> Result<Argument> {
         let mut by_ref = false;
-        let (name, type_) = match self {
+        let (name, type_, default) = match self {
             syn::FnArg::Receiver(_) => bail!("Cannot convert `self` arguments"),
             syn::FnArg::Typed(p) => {
                 let name = super::synner::name_from_pattern(&p.pat)?;
@@ -271,7 +271,8 @@ impl APIConverter<Argument> for &syn::FnArg {
                     }
                     ref t => ci.resolve_type_expression(&*t)?,
                 };
-                (name, type_)
+                let default = calc_arg_default(&type_, &p.attrs)?;
+                (name, type_, default)
             }
         };
         if let Type::Object(nm) = type_ {
@@ -281,10 +282,20 @@ impl APIConverter<Argument> for &syn::FnArg {
             name,
             type_,
             by_ref,
+            default,
             optional: false,
-            default: None,
         })
     }
+}
+
+fn calc_arg_default(type_: &Type, attrs: &Vec<syn::Attribute>) -> Result<Option<Literal>> {
+    for attr in attrs {
+        if attr.path.segments.iter().map(|segment| segment.ident.to_string()).eq(std::array::IntoIter::new(["uniffi", "default"])) {
+            let syn_lit: syn::Lit = attr.parse_args()?;
+            return Ok(Some(convert_default_value_syn(type_, &syn_lit)?));
+        }
+    }
+    Ok(None)
 }
 
 #[cfg(test)]

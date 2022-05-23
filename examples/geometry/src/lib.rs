@@ -22,6 +22,10 @@ mod geometry {
         pub end: Point,
     }
 
+    pub fn func_with_default(#[uniffi::default(0)] x: i32) -> i32 {
+        x
+    }
+
     pub fn gradient(ln: Line) -> f64 {
         let rise = ln.end.coord_y - ln.start.coord_y;
         let run = ln.end.coord_x - ln.start.coord_x;
