@@ -105,12 +105,10 @@ use std::io::prelude::*;
 use std::{collections::HashMap, env, process::Command, str::FromStr};
 
 pub mod backend;
-pub mod bindings;
 pub mod interface;
 mod macro_metadata;
 pub mod scaffolding;
 
-use bindings::TargetLanguage;
 pub use interface::ComponentInterface;
 use scaffolding::RustScaffolding;
 
@@ -296,96 +294,6 @@ pub fn generate_component_scaffolding(
     Ok(())
 }
 
-// Generate the bindings in the target languages that call the scaffolding
-// Rust code.
-pub fn generate_bindings(
-    udl_file: &Utf8Path,
-    config_file_override: Option<&Utf8Path>,
-    target_languages: Vec<&str>,
-    out_dir_override: Option<&Utf8Path>,
-    try_format_code: bool,
-) -> Result<()> {
-    let mut component = parse_udl(udl_file)?;
-    let crate_root = &guess_crate_root(udl_file)?;
-
-    let metadata = get_pkg_metadata(crate_root)?;
-    let lib_name = lib_name(&metadata)?;
-    if component.namespace() == lib_name {
-        rebuild_metadata(crate_root)?;
-        add_macro_metadata(&mut component, crate_root)?;
-    }
-
-    let config = get_config(&component, crate_root, config_file_override)?;
-    let out_dir = get_out_dir(udl_file, out_dir_override)?;
-    for language in target_languages {
-        bindings::write_bindings(
-            &config.bindings,
-            &component,
-            &out_dir,
-            language.try_into()?,
-            try_format_code,
-        )?;
-    }
-
-    Ok(())
-}
-
-// Run tests against the foreign language bindings (generated and compiled at the same time).
-// Note that the cdylib we're testing against must be built already.
-pub fn run_tests(
-    cdylib_dir: impl AsRef<Utf8Path>,
-    udl_files: &[impl AsRef<Utf8Path>],
-    test_scripts: &[impl AsRef<Utf8Path>],
-    config_file_override: Option<&Utf8Path>,
-) -> Result<()> {
-    // XXX - this is just for tests, so one config_file_override for all .udl files doesn't really
-    // make sense, so we don't let tests do this.
-    // "Real" apps will build the .udl files one at a file and can therefore do whatever they want
-    // with overrides, so don't have this problem.
-    assert!(udl_files.len() == 1 || config_file_override.is_none());
-
-    let cdylib_dir = cdylib_dir.as_ref();
-
-    // Group the test scripts by language first.
-    let mut language_tests: HashMap<TargetLanguage, Vec<_>> = HashMap::new();
-
-    for test_script in test_scripts {
-        let test_script = test_script.as_ref();
-        let lang: TargetLanguage = test_script
-            .extension()
-            .context("File has no extension!")?
-            .try_into()?;
-        language_tests
-            .entry(lang)
-            .or_default()
-            .push(test_script.to_owned());
-    }
-
-    for (lang, test_scripts) in language_tests {
-        for udl_file in udl_files {
-            let udl_file = udl_file.as_ref();
-            let crate_root = guess_crate_root(udl_file)?;
-            let mut component = parse_udl(udl_file)?;
-
-            let metadata = get_pkg_metadata(crate_root)?;
-            let lib_name = lib_name(&metadata)?;
-            if component.namespace() == lib_name {
-                rebuild_metadata(crate_root)?;
-                add_macro_metadata(&mut component, crate_root)?;
-            }
-
-            let config = get_config(&component, crate_root, config_file_override)?;
-            bindings::write_bindings(&config.bindings, &component, cdylib_dir, lang, true)?;
-            bindings::compile_bindings(&config.bindings, &component, cdylib_dir, lang)?;
-        }
-
-        for test_script in test_scripts {
-            bindings::run_script(cdylib_dir, &test_script, lang)?;
-        }
-    }
-    Ok(())
-}
-
 /// Guess the root directory of the crate from the path of its UDL file.
 ///
 /// For now, we assume that the UDL file is in `./src/something.udl` relative
@@ -505,14 +413,11 @@ fn rebuild_metadata(crate_root: &Utf8Path) -> anyhow::Result<()> {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct Config {
-    #[serde(default)]
-    bindings: bindings::Config,
 }
 
 impl From<&ComponentInterface> for Config {
     fn from(ci: &ComponentInterface) -> Self {
         Config {
-            bindings: ci.into(),
         }
     }
 }
@@ -524,7 +429,6 @@ pub trait MergeWith {
 impl MergeWith for Config {
     fn merge_with(&self, other: &Self) -> Self {
         Config {
-            bindings: self.bindings.merge_with(&other.bindings),
         }
     }
 }
@@ -630,13 +534,7 @@ pub fn run_main() -> Result<()> {
             no_format,
             config,
             udl_file,
-        } => crate::generate_bindings(
-            udl_file,
-            config.as_deref(),
-            language.iter().map(String::as_str).collect(),
-            out_dir.as_deref(),
-            !no_format,
-        ),
+        } => unimplemented!(),
         Commands::Scaffolding {
             out_dir,
             config,
@@ -653,7 +551,7 @@ pub fn run_main() -> Result<()> {
             udl_file,
             test_scripts,
             config,
-        } => crate::run_tests(cdylib_dir, &[udl_file], test_scripts, config.as_deref()),
+        } => unimplemented!(),
     }?;
     Ok(())
 }
