@@ -23,6 +23,7 @@
 /// This struct is based on `ByteBuffer` from the `ffi-support` crate, but modified
 /// to give a read-only view of externally-provided bytes.
 #[repr(C)]
+#[derive(Debug)]
 pub struct ForeignBytes {
     /// The length of the pointed-to data.
     /// We use an `i32` for compatibility with JNA.
