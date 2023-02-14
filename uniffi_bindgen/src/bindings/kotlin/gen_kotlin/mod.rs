@@ -256,7 +256,7 @@ impl KotlinCodeOracle {
             Type::Optional(inner) => Box::new(compounds::OptionalCodeType::new(*inner)),
             Type::Sequence(inner) => Box::new(compounds::SequenceCodeType::new(*inner)),
             Type::Map(key, value) => Box::new(compounds::MapCodeType::new(*key, *value)),
-            Type::External { name, .. } => Box::new(external::ExternalCodeType::new(name)),
+            Type::External { name, kind, .. } => Box::new(external::ExternalCodeType::new(name, kind)),
             Type::Custom { name, .. } => Box::new(custom::CustomCodeType::new(name)),
             Type::Unresolved { name } => {
                 unreachable!("Type `{name}` must be resolved before calling create_code_type")

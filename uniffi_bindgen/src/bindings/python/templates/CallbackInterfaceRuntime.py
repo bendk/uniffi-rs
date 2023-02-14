@@ -44,11 +44,18 @@ IDX_CALLBACK_FREE = 0
 class FfiConverterCallbackInterface:
     _handle_map = ConcurrentHandleMap()
 
-    def __init__(self, cb):
+    def __init__(self, cb, ffi_init_name):
         self._foreign_callback = cb
+        self._ffi_init_name = ffi_init_name
 
     def drop(self, handle):
         self.__class__._handle_map.remove(handle)
+
+    """
+    Register the Python function to handle the callback interface with the Rust dynamic library.
+    """
+    def register(self, ffi_lib):
+        rust_call(lambda err: getattr(ffi_lib, self._ffi_init_name)(self._foreign_callback, err))
 
     @classmethod
     def lift(cls, handle):

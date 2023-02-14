@@ -3,14 +3,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::backend::{CodeOracle, CodeType, Literal};
+use crate::interface::ExternalKind;
 
 pub struct ExternalCodeType {
     name: String,
+    kind: ExternalKind,
 }
 
 impl ExternalCodeType {
-    pub fn new(name: String) -> Self {
-        Self { name }
+    pub fn new(name: String, kind: ExternalKind) -> Self {
+        Self { name, kind }
     }
 }
 
@@ -25,5 +27,14 @@ impl CodeType for ExternalCodeType {
 
     fn literal(&self, _oracle: &dyn CodeOracle, _literal: &Literal) -> String {
         unreachable!("Can't have a literal of an external type");
+    }
+
+    fn initialization_fn(&self, oracle: &dyn CodeOracle) -> Option<String> {
+        match self.kind {
+            ExternalKind::CallbackInterface => {
+                Some(format!("{}.register", self.ffi_converter_name(oracle)))
+            }
+            _ => None
+        }
     }
 }
