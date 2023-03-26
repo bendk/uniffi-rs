@@ -7,6 +7,9 @@ pub use uniffi_checksum_derive::Checksum;
 
 use serde::{Deserialize, Serialize};
 
+mod ffi_names;
+pub use ffi_names::*;
+
 mod reader;
 pub use reader::MetadataReader;
 
@@ -121,6 +124,10 @@ impl FnMetadata {
     pub fn ffi_symbol_name(&self) -> String {
         fn_ffi_symbol_name(&self.module_path, &self.name)
     }
+
+    pub fn checksum_symbol_name(&self) -> String {
+        fn_checksum_symbol_name(&self.module_path, &self.name)
+    }
 }
 
 #[derive(Clone, Debug, Checksum, Deserialize, PartialEq, Eq, Serialize)]
@@ -136,8 +143,11 @@ pub struct MethodMetadata {
 
 impl MethodMetadata {
     pub fn ffi_symbol_name(&self) -> String {
-        let full_name = format!("impl_{}_{}", self.self_name, self.name);
-        fn_ffi_symbol_name(&self.module_path, &full_name)
+        method_fn_symbol_name(&self.module_path, &self.self_name, &self.name)
+    }
+
+    pub fn checksum_symbol_name(&self) -> String {
+        method_checksum_symbol_name(&self.module_path, &self.self_name, &self.name)
     }
 }
 
@@ -233,8 +243,7 @@ impl ObjectMetadata {
     ///
     /// This function is used to free the memory used by this object.
     pub fn free_ffi_symbol_name(&self) -> String {
-        let free_name = format!("object_free_{}", self.name);
-        fn_ffi_symbol_name(&self.module_path, &free_name)
+        free_fn_symbol_name(&self.module_path, &self.name)
     }
 }
 
@@ -248,17 +257,12 @@ pub struct ErrorMetadata {
 
 /// Returns the last 16 bits of the value's hash as computed with [`SipHasher13`].
 ///
-/// To be used as a checksum of FFI symbols, as a safeguard against different UniFFI versions being
-/// used for scaffolding and bindings generation.
+/// This is used as a safeguard against different UniFFI versions being used for scaffolding and
+/// bindings generation.
 pub fn checksum<T: Checksum>(val: &T) -> u16 {
     let mut hasher = siphasher::sip::SipHasher13::new();
     val.checksum(&mut hasher);
     (hasher.finish() & 0x000000000000FFFF) as u16
-}
-
-pub fn fn_ffi_symbol_name(mod_path: &str, name: &str) -> String {
-    let mod_path = mod_path.replace("::", "__");
-    format!("_uniffi_{mod_path}_{name}")
 }
 
 /// Enum covering all the possible metadata types

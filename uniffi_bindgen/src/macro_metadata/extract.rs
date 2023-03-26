@@ -12,16 +12,25 @@ use goblin::{
     pe::PE,
     Object,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uniffi_meta::Metadata;
 
-/// Extract metadata written by the `uniffi::export` macro from a library file
+/// Extracted proc-macro metadata from a library file
 ///
-/// In addition to generating the scaffolding, that macro and also encodes the
+/// In addition to generating the scaffolding, the macros and also encode the
 /// `uniffi_meta::Metadata` for the components which can be used to generate the bindings side of
 /// the interface.
-pub fn extract_from_library(path: &Utf8Path) -> anyhow::Result<Vec<Metadata>> {
-    extract_from_bytes(&fs::read(path)?)
+pub struct ExtractedMetadata {
+    pub items: Vec<Metadata>,
+    pub checksums: HashMap<String, u16>,
+}
+
+impl ExtractedMetadata {
+    pub fn from_library(path: &Utf8Path) -> anyhow::Result<Self> {
+        let checksums = HashMap::new();
+        let items = extract_from_bytes(&fs::read(path)?)?;
+        Ok(Self { items, checksums })
+    }
 }
 
 fn extract_from_bytes(file_data: &[u8]) -> anyhow::Result<Vec<Metadata>> {

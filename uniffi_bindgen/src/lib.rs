@@ -287,6 +287,22 @@ pub fn generate_component_scaffolding(
 
 // Generate the bindings in the target languages that call the scaffolding
 // Rust code.
+pub(crate) fn init_componint_interface_and_config(
+    udl_file: &Utf8Path,
+    config_file_override: Option<&Utf8Path>,
+    library_file: Option<&Utf8Path>,
+) -> Result<(ComponentInterface, Config)> {
+    let mut ci = parse_udl(udl_file)?;
+    if let Some(library_file) = library_file {
+        macro_metadata::add_to_ci_from_library(&mut ci, library_file)?;
+    }
+    let crate_root = &guess_crate_root(udl_file).context("Failed to guess crate root")?;
+    let config = get_config(&ci, crate_root, config_file_override)?;
+    Ok((ci, config))
+}
+
+// Generate the bindings in the target languages that call the scaffolding
+// Rust code.
 pub fn generate_bindings(
     udl_file: &Utf8Path,
     config_file_override: Option<&Utf8Path>,
@@ -295,13 +311,8 @@ pub fn generate_bindings(
     library_file: Option<&Utf8Path>,
     try_format_code: bool,
 ) -> Result<()> {
-    let mut component = parse_udl(udl_file)?;
-    if let Some(library_file) = library_file {
-        macro_metadata::add_to_ci_from_library(&mut component, library_file)?;
-    }
-    let crate_root = &guess_crate_root(udl_file).context("Failed to guess crate root")?;
-
-    let config = get_config(&component, crate_root, config_file_override)?;
+    let (component, config) =
+        init_componint_interface_and_config(udl_file, config_file_override, library_file)?;
     let out_dir = get_out_dir(udl_file, out_dir_override)?;
     for language in target_languages {
         bindings::write_bindings(
@@ -312,13 +323,12 @@ pub fn generate_bindings(
             try_format_code,
         )?;
     }
-
     Ok(())
 }
 
 pub fn dump_json(library_path: &Utf8Path) -> Result<String> {
-    let metadata = macro_metadata::extract_from_library(library_path)?;
-    Ok(serde_json::to_string_pretty(&metadata)?)
+    let metadata = macro_metadata::ExtractedMetadata::from_library(library_path)?;
+    Ok(serde_json::to_string_pretty(&metadata.items)?)
 }
 
 pub fn print_json(library_path: &Utf8Path) -> Result<()> {

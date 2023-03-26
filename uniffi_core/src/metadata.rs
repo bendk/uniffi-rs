@@ -173,6 +173,27 @@ impl MetadataBuffer {
         }
         result
     }
+
+    // Create a checksum from this MetadataBuffer
+    //
+    // This is used by the bindings code to verify that the library they link to is the same one
+    // that the bindings were generated from.
+    pub const fn checksum(self) -> u16 {
+        // Taken from the fnv_hash() function from the FNV crate (https://github.com/servo/rust-fnv/blob/master/lib.rs).
+        // fnv_hash() hasn't been released in a version yet.
+        const INITIAL_STATE: u64 = 0xcbf29ce484222325;
+        const PRIME: u64 = 0x100000001b3;
+
+        let mut hash = INITIAL_STATE;
+        let mut i = 0;
+        while i < self.size {
+            hash = hash ^ (self.bytes[i] as u64);
+            hash = hash.wrapping_mul(PRIME);
+            i += 1;
+        }
+        // Convert the 64-bit hash to a 16-bit hash by XORing everything together
+        (hash ^ (hash >> 16) ^ (hash >> 32) ^ (hash >> 48)) as u16
+    }
 }
 
 impl AsRef<[u8]> for MetadataBuffer {

@@ -6,7 +6,7 @@ use anyhow::{bail, Result};
 use camino::{Utf8Path, Utf8PathBuf};
 use cargo_metadata::{Message, Metadata, MetadataCommand, Package, Target};
 use fs_err as fs;
-use once_cell::sync::Lazy;
+use once_cell::sync::{Lazy, OnceCell};
 use serde::Deserialize;
 use std::{
     collections::hash_map::DefaultHasher,
@@ -36,6 +36,7 @@ pub struct CompileSource {
 
 static CARGO_METADATA: Lazy<Metadata> = Lazy::new(get_cargo_metadata);
 static CARGO_BUILD_MESSAGES: Lazy<Vec<Message>> = Lazy::new(get_cargo_build_messages);
+static FORCE_FEATURES: OnceCell<Vec<String>> = OnceCell::new();
 
 /// Struct for running fixture and example tests for bindings generators
 ///
@@ -258,6 +259,7 @@ fn get_cargo_build_messages() -> Vec<Message> {
     let mut child = Command::new(env!("CARGO"))
         .arg("build")
         .arg("--message-format=json")
+        .args(FORCE_FEATURES.get().map(|features| format!("--features={}", features.join(","))))
         .stdout(Stdio::piped())
         .spawn()
         .expect("Error running cargo build");
@@ -271,4 +273,12 @@ fn hash_path(path: &Utf8Path) -> String {
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
     format!("{:x}", hasher.finish())
+}
+
+/// Set the features to enable when building the fixture creat
+///
+/// This can only be called once and must be called before the first usage of UniFFITestHelper.
+/// This is a hack for the fixtures-version-mismatch crate, see the README.md there for details.
+pub fn set_features(features: Vec<String>) {
+    FORCE_FEATURES.set(features).unwrap();
 }

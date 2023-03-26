@@ -142,22 +142,48 @@ pub fn crate_name() -> String {
     std::env::var("CARGO_CRATE_NAME").unwrap().replace('-', "_")
 }
 
-pub fn create_metadata_static_var(
+pub fn create_metadata_items(
     kind: &str,
     name: &str,
     metadata_expr: TokenStream,
+    items: MetadataItems,
 ) -> TokenStream {
-    let crate_name = crate_name().to_uppercase();
-    let name = name.to_uppercase();
-    let const_ident = format_ident!("UNIFFI_META_CONST_{crate_name}_{kind}_{name}");
-    let static_ident = format_ident!("UNIFFI_META_{crate_name}_{kind}_{name}");
+    let crate_name = crate_name();
+    let crate_name_upper = crate_name.to_uppercase();
+    let kind_upper = kind.to_uppercase();
+    let name_upper = name.to_uppercase();
+    let const_ident = format_ident!("UNIFFI_META_CONST_{crate_name_upper}_{kind_upper}_{name_upper}");
+    let static_ident = format_ident!("UNIFFI_META_{crate_name_upper}_{kind_upper}_{name_upper}");
+
+    let checksum_fn = match items {
+        MetadataItems::WithoutChecksum => quote! { },
+        MetadataItems::WithChecksum => {
+            // TODO: consolidate the checksum naming code
+            let ident = format_ident!("uniffi_checksum_{crate_name}_{kind}_{name}");
+            quote! {
+                #[doc(hidden)]
+                #[no_mangle]
+                pub extern "C" fn #ident() -> u16 {
+                    #const_ident.checksum()
+                }
+            }
+        }
+    };
 
     quote! {
         const #const_ident: ::uniffi::MetadataBuffer = #metadata_expr;
         #[no_mangle]
         #[doc(hidden)]
         pub static #static_ident: [u8; #const_ident.size] = #const_ident.into_array();
+
+        #checksum_fn
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum MetadataItems {
+    WithoutChecksum,
+    WithChecksum,
 }
 
 pub fn try_metadata_value_from_usize(value: usize, error_message: &str) -> syn::Result<u8> {

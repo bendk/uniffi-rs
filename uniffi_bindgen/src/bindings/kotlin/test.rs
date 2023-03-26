@@ -52,6 +52,7 @@ pub fn run_script(
         } else {
             std::iter::once(String::from("--")).chain(args).collect()
         });
+    println!("{command:?}");
 
     let status = command
         .spawn()
@@ -104,6 +105,7 @@ fn build_jar(crate_name: &str, out_dir: &Utf8Path, options: &RunScriptOptions) -
         .arg("-classpath")
         .arg(calc_classpath(vec![]))
         .args(sources);
+    println!("{command:?}");
 
     let status = command
         .spawn()

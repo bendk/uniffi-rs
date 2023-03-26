@@ -10,15 +10,12 @@ mod ci;
 mod extract;
 
 pub use ci::add_to_ci;
-pub use extract::extract_from_library;
+pub use extract::ExtractedMetadata;
 
 pub fn add_to_ci_from_library(
     iface: &mut ComponentInterface,
     library_path: &Utf8Path,
 ) -> anyhow::Result<()> {
-    add_to_ci(
-        iface,
-        extract_from_library(library_path).context("Failed to extract proc-macro metadata")?,
-    )
-    .context("Failed to add proc-macro metadata to ComponentInterface")
+    let extracted = ExtractedMetadata::from_library(library_path).context("Failed to extract proc-macro metadata")?;
+    add_to_ci(iface, extracted).context("Failed to add proc-macro metadata to ComponentInterface")
 }

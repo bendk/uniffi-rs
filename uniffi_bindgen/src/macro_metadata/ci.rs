@@ -6,6 +6,7 @@ use crate::interface::{ComponentInterface, Enum, Error, Record, Type};
 use anyhow::{anyhow, bail, Context};
 use std::collections::HashMap;
 use uniffi_meta::Metadata;
+use super::ExtractedMetadata;
 
 /// Add Metadata items to the ComponentInterface
 ///
@@ -17,10 +18,10 @@ use uniffi_meta::Metadata;
 /// the `Metadata` items that the macro creates.
 pub fn add_to_ci(
     iface: &mut ComponentInterface,
-    metadata_items: Vec<Metadata>,
+    extracted: ExtractedMetadata,
 ) -> anyhow::Result<()> {
     // Map crate names to namespaces
-    let namespace_map = metadata_items
+    let namespace_map = extracted.items
         .iter()
         .filter_map(|i| match i {
             Metadata::Namespace(meta) => Some((meta.crate_name.clone(), meta.name.clone())),
@@ -28,7 +29,7 @@ pub fn add_to_ci(
         })
         .collect::<HashMap<_, _>>();
 
-    for item in metadata_items {
+    for item in extracted.items {
         let (item_desc, module_path) = match &item {
             Metadata::Namespace(_) => continue,
             Metadata::Func(meta) => (format!("function `{}`", meta.name), &meta.module_path),
@@ -59,10 +60,12 @@ pub fn add_to_ci(
         match item {
             Metadata::Namespace(_) => unreachable!(),
             Metadata::Func(meta) => {
-                iface.add_fn_meta(meta)?;
+                let checksum = lookup_checksum(&extracted.checksums, &meta.name)?;
+                iface.add_fn_meta(meta, checksum)?;
             }
             Metadata::Method(meta) => {
-                iface.add_method_meta(meta);
+                let checksum = lookup_checksum(&extracted.checksums, &meta.name)?;
+                iface.add_method_meta(meta, checksum);
             }
             Metadata::Record(meta) => {
                 let ty = Type::Record(meta.name.clone());
@@ -103,4 +106,12 @@ pub fn add_to_ci(
         .context("ComponentInterface consistency error")?;
 
     Ok(())
+}
+
+pub fn lookup_checksum(checksums: &HashMap<String, u16>, name: &str) -> anyhow::Result<u16> {
+    match checksums.get(name) {
+        Some(checksum) => Ok(*checksum),
+        //None => bail!("Missing checksum for {}", name),
+        None => Ok(0),
+    }
 }
