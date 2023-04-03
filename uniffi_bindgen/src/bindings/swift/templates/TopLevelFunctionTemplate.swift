@@ -10,9 +10,11 @@ fileprivate class _UniFFI_{{ func.name()|class_name }}_Env {
     }
 
     deinit {
+        print("Dropping _UniFFI_{{ func.name()|class_name }}_Env")
         try! rustCall {
             {{ func.ffi_func().name() }}_drop(self.rustFuture, $0)
         }
+        print("Dropped _UniFFI_{{ func.name()|class_name }}_Env")
     }
 }
 

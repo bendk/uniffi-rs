@@ -10,6 +10,7 @@ use std::{
     thread,
     time::Duration,
 };
+use futures::future::select_all;
 
 /// Non-blocking timer future.
 pub struct TimerFuture {
@@ -90,6 +91,17 @@ pub async fn say_after(ms: u16, who: String) -> String {
     TimerFuture::new(Duration::from_millis(ms.into())).await;
 
     format!("Hello, {who}!")
+}
+
+/// Race to say_after calls
+#[uniffi::export]
+pub async fn race_say_after(ms: u16, who: String, ms2: u16, who2: String) -> String {
+    let (saying, _index, _other_futures) = select_all([
+        Box::pin(say_after(ms, who)),
+        Box::pin(say_after(ms2, who2)),
+    ]).await;
+
+    saying
 }
 
 /// Async function that sleeps!

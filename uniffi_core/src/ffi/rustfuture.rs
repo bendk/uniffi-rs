@@ -343,6 +343,7 @@ impl<T> RustFuture<T> {
         foreign_waker: RustFutureForeignWakerFunction,
         foreign_waker_environment: *const c_void,
     ) -> Poll<T> {
+        println!("RustFutureForeignWaker -- poll {:?} {:?} ({:?})", foreign_waker, foreign_waker_environment, std::time::SystemTime::now());
         let waker = unsafe {
             Waker::from_raw(RawWaker::new(
                 RustFutureForeignWaker::new(foreign_waker, foreign_waker_environment)
@@ -352,7 +353,12 @@ impl<T> RustFuture<T> {
         };
         let mut context = Context::from_waker(&waker);
 
-        self.0.as_mut().poll(&mut context)
+        let result = self.0.as_mut().poll(&mut context);
+        match &result {
+            Poll::Pending => println!("RustFutureForeignWaker -- Poll::Pending"),
+            Poll::Ready(_) => println!("RustFutureForeignWaker -- Poll::Ready"),
+        };
+        result
     }
 }
 
@@ -420,6 +426,7 @@ impl RustFutureForeignRawWaker {
     /// This function will be called when the `RawWaker` gets cloned, e.g. when
     /// the `Waker` in which the `RawWaker` is stored gets cloned.
     unsafe fn clone_waker(foreign_waker: *const ()) -> RawWaker {
+        println!("RustFutureForeignWaker -- clone ({:?})",  std::time::SystemTime::now());
         RustFutureForeignWaker::increment_reference_count(foreign_waker);
 
         RawWaker::new(foreign_waker, &Self::VTABLE)
@@ -428,6 +435,7 @@ impl RustFutureForeignRawWaker {
     /// This function will be called when `wake` is called on the `Waker`. It
     /// must wake up the task associated with this `RawWaker`.
     unsafe fn wake(foreign_waker: *const ()) {
+        println!("RustFutureForeignWaker -- wake ({:?})",  std::time::SystemTime::now());
         let waker = RustFutureForeignWaker::from_unit_ptr(foreign_waker);
         let func = waker.waker;
 
@@ -437,6 +445,7 @@ impl RustFutureForeignRawWaker {
     /// This function will be called when `wake_by_ref` is called on the
     /// `Waker`. It must wake up the task associated with this `RawWaker`.
     unsafe fn wake_by_ref(foreign_waker: *const ()) {
+        println!("RustFutureForeignWaker -- wake_by_ref ({:?})",  std::time::SystemTime::now());
         let waker = ManuallyDrop::new(RustFutureForeignWaker::from_unit_ptr(foreign_waker));
         let func = waker.waker;
 
@@ -445,7 +454,9 @@ impl RustFutureForeignRawWaker {
 
     /// This function gets called when a `RawWaker` gets dropped.
     unsafe fn drop_waker(foreign_waker: *const ()) {
-        drop(RustFutureForeignWaker::from_unit_ptr(foreign_waker));
+        let arc = RustFutureForeignWaker::from_unit_ptr(foreign_waker);
+        println!("RustFutureForeignWaker -- drop with {} refcount, ({:?})",  Arc::strong_count(&arc), std::time::SystemTime::now());
+        drop(arc);
     }
 }
 

@@ -1,7 +1,9 @@
-from uniffi_futures import always_ready, void, sleep, say_after, new_megaphone, say_after_with_tokio, fallible_me, MyError, MyRecord, new_my_record
+from uniffi_futures import always_ready, void, sleep, say_after, race_say_after, new_megaphone, say_after_with_tokio, fallible_me, MyError, MyRecord, new_my_record
+import uniffi_futures
 import unittest
 from datetime import datetime
 import asyncio
+import gc
 
 def now():
     return datetime.now()
@@ -73,6 +75,23 @@ class TestFutures(unittest.TestCase):
 
         asyncio.run(test())
 
+    def test_race_say_after(self):
+        async def test():
+            # `race_say_after` creates 2 Rust futures and races them.  The
+            # resulting future will be resolved by whichever child finishes
+            # first.
+            result = await race_say_after(500, 'Alice', 1000, 'Bob')
+            self.assertEqual(result, 'Hello, Alice!')
+            # The Rust future has now been polled to completion and should not
+            # be polled again.
+            #
+            # Sleep long enough for the second child future to finish.  Python
+            # will get a waker callback, but should not poll the future again.
+            # If it does, this probably crash the program.
+            await asyncio.sleep(1)
+
+        asyncio.run(test())
+
     def test_async_methods(self):
         async def test():
             megaphone = new_megaphone()
@@ -141,5 +160,14 @@ class TestFutures(unittest.TestCase):
 
         asyncio.run(test())
 
+    def test_cleanup(self):
+        async def test():
+            await always_ready()
+
+        asyncio.run(test())
+        live_futures = [o for o in gc.get_referrers(uniffi_futures.Future) if type(o) == uniffi_futures.Future]
+        self.assertEqual(len(live_futures), 0, "Futures still alive after async function has finished")
+
 if __name__ == '__main__':
-    unittest.main()
+    unittest.main(defaultTest='TestFutures.test_race_say_after')
+    #unittest.main()
