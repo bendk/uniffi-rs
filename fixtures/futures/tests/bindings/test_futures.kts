@@ -2,6 +2,11 @@ import uniffi.fixture.futures.*
 import kotlinx.coroutines.*
 import kotlin.system.*
 
+runBlocking {
+    val foo = Foo()
+    assert(foo.bar() == "OK")
+}
+
 // init UniFFI to get good measurements after that
 runBlocking {
     val time = measureTimeMillis {

@@ -249,4 +249,18 @@ pub async fn broken_sleep(ms: u16, fail_after: u16) {
     .await;
 }
 
+pub struct Foo;
+
+#[uniffi::export]
+impl Foo {
+    #[uniffi::constructor]
+    fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
+
+    pub async fn bar(&self) -> Result<String, MyError> {
+        Ok("OK".into())
+    }
+}
+
 uniffi::include_scaffolding!("uniffi_futures");
