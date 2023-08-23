@@ -59,6 +59,12 @@ pub struct Function {
     //    avoids a weird circular dependency in the calculation.
     #[checksum_ignore]
     pub(super) ffi_func: FfiFunction,
+    // FFI Functions for RustFutureHandles returned by async functions.  Ignored by the checksum
+    // for the same reason as above.
+    #[checksum_ignore]
+    pub(super) rust_future_startup_func: Option<FfiFunction>,
+    #[checksum_ignore]
+    pub(super) rust_future_free_func: Option<FfiFunction>,
     pub(super) throws: Option<Type>,
     pub(super) checksum_fn_name: String,
     // Force a checksum value, or we'll fallback to the trait.
@@ -91,6 +97,24 @@ impl Function {
         &self.ffi_func
     }
 
+    pub fn rust_future_startup_func(&self) -> &FfiFunction {
+        self.rust_future_startup_func.as_ref().unwrap_or_else(|| {
+            panic!(
+                "Expected function {} to have a rust_future_startup_func",
+                self.name
+            )
+        })
+    }
+
+    pub fn rust_future_free_func(&self) -> &FfiFunction {
+        self.rust_future_free_func.as_ref().unwrap_or_else(|| {
+            panic!(
+                "Expected function {} to have a rust_future_free_func",
+                self.name
+            )
+        })
+    }
+
     pub fn checksum_fn_name(&self) -> &str {
         &self.checksum_fn_name
     }
@@ -121,6 +145,22 @@ impl Function {
             self.return_type.as_ref().map(Into::into),
             self.arguments.iter().map(Into::into),
         );
+        if self.is_async {
+            self.ffi_func.return_type = Some(FfiType::RustFutureHandle);
+            self.rust_future_startup_func.get_or_insert_with(|| {
+                FfiFunction::new_rust_future_startup(
+                    uniffi_meta::fn_future_method_symbol_name(ci_namespace, &self.name, "startup"),
+                    self.return_type.as_ref().map(Into::into),
+                )
+            });
+            self.rust_future_free_func.get_or_insert_with(|| {
+                FfiFunction::new_rust_future_free(uniffi_meta::fn_future_method_symbol_name(
+                    ci_namespace,
+                    &self.name,
+                    "free",
+                ))
+            });
+        }
         Ok(())
     }
 
@@ -149,9 +189,11 @@ impl From<uniffi_meta::FnParamMetadata> for Argument {
 impl From<uniffi_meta::FnMetadata> for Function {
     fn from(meta: uniffi_meta::FnMetadata) -> Self {
         let ffi_name = meta.ffi_symbol_name();
+        let future_startup_name = meta.future_method_symbol_name("startup");
+        let future_free_name = meta.future_method_symbol_name("free");
         let checksum_fn_name = meta.checksum_symbol_name();
         let is_async = meta.is_async;
-        let return_type = meta.return_type.map(Into::into);
+        let return_type = meta.return_type.map(Type::from);
         let arguments = meta.inputs.into_iter().map(Into::into).collect();
 
         let ffi_func = FfiFunction {
@@ -159,6 +201,14 @@ impl From<uniffi_meta::FnMetadata> for Function {
             is_async,
             ..FfiFunction::default()
         };
+        let rust_future_startup_func = is_async.then(|| {
+            FfiFunction::new_rust_future_startup(
+                future_startup_name,
+                return_type.clone().map(FfiType::from),
+            )
+        });
+        let rust_future_free_func =
+            is_async.then(|| FfiFunction::new_rust_future_free(future_free_name));
 
         Self {
             name: meta.name,
@@ -166,6 +216,8 @@ impl From<uniffi_meta::FnMetadata> for Function {
             arguments,
             return_type,
             ffi_func,
+            rust_future_startup_func,
+            rust_future_free_func,
             throws: meta.throws,
             checksum_fn_name,
             checksum: meta.checksum,

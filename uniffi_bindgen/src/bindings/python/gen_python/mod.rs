@@ -318,6 +318,7 @@ impl PythonCodeOracle {
                 )
             }
             FfiType::FutureCallbackData => "ctypes.c_size_t".to_string(),
+            FfiType::RustFutureHandle => "ctypes.c_size_t".into(),
         }
     }
 }

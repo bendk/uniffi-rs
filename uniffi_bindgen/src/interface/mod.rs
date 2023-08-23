@@ -467,7 +467,11 @@ impl ComponentInterface {
                     .iter()
                     .map(|cb| cb.ffi_init_callback()),
             )
-            .chain(self.functions.iter().map(|f| &f.ffi_func))
+            .chain(self.functions.iter().flat_map(|f| {
+                iter::once(&f.ffi_func)
+                    .chain(&f.rust_future_startup_func)
+                    .chain(&f.rust_future_free_func)
+            }))
     }
 
     /// List all FFI functions definitions for RustBuffer functionality.

@@ -209,7 +209,7 @@ runBlocking {
 runBlocking {
     val time = measureTimeMillis {
         val job = launch {
-            useSharedResource(SharedResourceOptions(releaseAfterMs=100U, timeoutMs=1000U))
+            useSharedResource(SharedResourceOptions(releaseAfterMs=1000U, timeoutMs=100U))
         }
 
         // Wait some time to ensure the task has locked the shared resource
@@ -219,7 +219,7 @@ runBlocking {
 
         // Try accessing the shared resource again.  The initial task should release the shared resource
         // before the timeout expires.
-        useSharedResource(SharedResourceOptions(releaseAfterMs=0U, timeoutMs=1000U))
+        useSharedResource(SharedResourceOptions(releaseAfterMs=0U, timeoutMs=100U))
     }
     println("useSharedResource: ${time}ms")
 }

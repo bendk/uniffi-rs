@@ -11,11 +11,14 @@
 //! What happens when you call an async function exported from the Rust API?
 //!
 //! 1. You make a call to a generated async function in the foreign bindings.
-//! 2. That function suspends itself, then makes a scaffolding call.  In addition to the normal
-//!    arguments, it passes a `ForeignExecutor` and callback.
-//! 3. Rust uses the `ForeignExecutor` to schedules polls of the Future until it's ready.  Then
+//! 2. That function makes a scaffolding call to get a [RustFutureHandle]
+//! 3. That function suspends itself, then starts up the future, passing a [ForeignExecutor] and a
+//!    callback
+//! 4. Rust uses the [ForeignExecutor] to schedules polls of the Future until it's ready.  Then
 //!    invokes the callback.
-//! 4. The callback resumes the suspended async function from (2), closing the loop.
+//! 5. The suspended async function resumes when either the callback is called or the foreign
+//!    language cancels the future.
+//! 6. The generated function drops the future
 //!
 //! # Anatomy of an async call
 //!
@@ -36,40 +39,52 @@
 //! fn hello() -> impl Future<Output = bool> { /* … */ }
 //! ```
 //!
-//! `uniffi-bindgen` will generate a scaffolding function for each exported async function:
+//! `uniffi-bindgen` will generate 3 scaffolding functions for each exported async function:
 //!
 //! ```rust,ignore
-//! // The `hello` function, as seen from the outside. It inputs 3 extra arguments:
+//! // The scaffolding function
+//! #[no_mangle]
+//! pub extern "C" fn uniffi_fn_hello(
+//!     // ...If the function inputted arguments, the lowered versions would go here
+//! ) {
+//!     // rust_future_new wraps the future with [RustFuture] and returns a [RustFutureHandle]
+//!     rust_future_new::<_, bool, crate::UniFFITag,>(hello())
+//! }
+//!
+//! // The startup function, which inputs:
 //! //  - executor: used to schedule polls of the future
 //! //  - callback: invoked when the future is ready
 //! //  - callback_data: opaque pointer that's passed to the callback.  It points to any state needed to
 //! //    resume the async function.
+//! //
+//! // Rust will continue to poll the future until it's ready, after that.  The callback will
+//! // eventually be invoked with these arguments:
+//! //   - callback_data
+//! //   - FfiConverter::ReturnType (the type that would be returned by a sync function)
+//! //   - RustCallStatus (used to signal errors/panics when executing the future)
+//! //
+//! // Once the callback is called, Rust will stop polling the future.
 //! #[no_mangle]
-//! pub extern "C" fn _uniffi_hello(
-//!     // ...If the function inputted arguments, the lowered versions would go here
+//! pub extern "C" fn uniffi_future_startup_hello(
+//!     handle: RustFutureHandle,
 //!     uniffi_executor: ForeignExecutor,
 //!     uniffi_callback: <bool as FfiConverter<crate::UniFFITag>>::FutureCallback,
 //!     uniffi_callback_data: *const (),
 //!     uniffi_call_status: &mut ::uniffi::RustCallStatus
 //! ) {
-//!     ::uniffi::call_with_output(uniffi_call_status, || {
-//!         let uniffi_rust_future = RustFuture::<_, bool, crate::UniFFITag,>::new(
-//!             future: hello(), // the future!
-//!             uniffi_executor,
-//!             uniffi_callback,
-//!             uniffi_callback_data,
-//!         );
-//!         uniffi_rust_future.wake();
-//!     })
+//!    // Arranges for [RustFutureHandle::startup] to be run, which is tricky since the `F`
+//!    // parameter of RustFuture is anonymous.  See RustFutureVTable for how this works
+//! }
+//! // Drop the future
+//! //
+//! // If this is called when the future is still Pending, then it will be dropped, releasing any
+//! // held resources and Rust will stop polling it.
+//! #[no_mangle]
+//! pub extern "C" fn uniffi_future_drop_hello(handle: RustFutureHandle) {
+//!    // Arranges for the [RustFuture] to be dropped, which is tricky since the `F`
+//!    // parameter of RustFuture is anonymous.  See RustFutureVTable for how this works
 //! }
 //! ```
-//!
-//! Rust will continue to poll the future until it's ready, after that.  The callback will
-//! eventually be invoked with these arguments:
-//!   - callback_data
-//!   - FfiConverter::ReturnType (the type that would be returned by a sync function)
-//!   - RustCallStatus (used to signal errors/panics when executing the future)
-//! - Rust will stop polling the future, even if it's waker is invoked again.
 //!
 //! ## How does `Future` work exactly?
 //!
@@ -125,8 +140,8 @@ use std::{
     panic,
     pin::Pin,
     sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
+        atomic::{AtomicU8, Ordering},
+        Arc, Weak,
     },
     task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
@@ -138,29 +153,39 @@ use std::{
 pub type FutureCallback<T> =
     extern "C" fn(callback_data: *const (), result: T, status: RustCallStatus);
 
+/// Opaque handle for a Rust future that's stored by the foreign language code
+#[repr(transparent)]
+pub struct RustFutureHandle(*const ());
+
+impl RustFutureHandle {
+    pub fn null() -> Self {
+        Self(std::ptr::null())
+    }
+}
+
 /// Future that the foreign code is awaiting
-///
-/// RustFuture is always stored inside a Pin<Arc<>>.  The `Arc<>` allows it to be shared between
-/// wakers and Pin<> signals that it must not move, since this would break any self-references in
-/// the future.
-pub struct RustFuture<F, T, UT>
+struct RustFuture<F, T, UT>
 where
-    // The future needs to be `Send`, since it will move to whatever thread the foreign executor
-    // chooses.  However, it doesn't need to be `Sync', since we don't share references between
-    // threads (see do_wake()).
     F: Future<Output = T> + Send,
     T: FfiConverter<UT>,
 {
+    state: AtomicU8,
     future: UnsafeCell<F>,
+    context: UnsafeCell<Option<RustFutureContext<T, UT>>>,
+}
+
+/// Context for a Rust future.
+///
+/// These is the ForeignExecutor used to drive the future to completion alongside the callback to
+/// call when it's done.
+struct RustFutureContext<T: FfiConverter<UT>, UT> {
     executor: ForeignExecutor,
-    wake_counter: AtomicU32,
     callback: T::FutureCallback,
     callback_data: *const (),
 }
 
-// Mark `RustFuture` as `Send` + `Sync`, since we will be sharing it between threads.
-// This means we need to serialize access to any fields that aren't `Send` + `Sync` (`future`, `callback`, and `callback_data`).
-// See `do_wake()` for details on this.
+// Mark [RustFuture] as [Send] + [Sync], since we will be sharing it between threads.  See the code
+// at the top of the impl block for now we manage access to the [UnsafeCell] fields.
 
 unsafe impl<F, T, UT> Send for RustFuture<F, T, UT>
 where
@@ -176,36 +201,203 @@ where
 {
 }
 
+/// Create a [RustFuture] and return a handle to it
+///
+/// The returned `RustFutureHandle` represents the one permanent strong reference to the future.
+/// When the corresponding foreign async function completes or is cancelled, the returned
+/// [RustFutureHandle] must be passed to rust_future_free().
+///
+/// This is needed to handle cancellation correctly.  When the async function is cancelled, the foreign language
+/// will call `rust_future_free()` through a scaffolding function.  When that happens, we want to
+/// immediately drop the future and release all resources -- even when the waker is stored by a
+/// Rust executor.  See #1669 for an example of this.
+///
+/// For each async function, UniFFI generates a scaffolding function that forward calls to
+/// [rust_future_startup] and scaffolding functions to forward calls to each of the
+/// [RustFutureVTable] functions.
+pub fn rust_future_new<F, T, UT>(future: F) -> RustFutureHandle
+where
+    // The future needs to be `Send`, since it will move to whatever thread the foreign executor
+    // chooses.  However, it doesn't need to be `Sync', since we don't share references between
+    // threads (see do_wake()).
+    F: Future<Output = T> + Send,
+    T: FfiConverter<UT>,
+{
+    let future = RustFuture::new(future);
+    RustFutureHandle(Arc::into_raw(future) as *const ())
+}
+
 impl<F, T, UT> RustFuture<F, T, UT>
 where
     F: Future<Output = T> + Send,
     T: FfiConverter<UT>,
 {
-    pub fn new(
-        future: F,
-        executor_handle: ForeignExecutorHandle,
-        callback: T::FutureCallback,
-        callback_data: *const (),
-    ) -> Pin<Arc<Self>> {
-        let executor =
-            <ForeignExecutor as FfiConverter<crate::UniFfiTag>>::try_lift(executor_handle)
-                .expect("Error lifting ForeignExecutorHandle");
-        Arc::pin(Self {
+    fn new(future: F) -> Arc<Self> {
+        Arc::new(Self {
+            state: AtomicU8::new(0),
             future: UnsafeCell::new(future),
-            wake_counter: AtomicU32::new(0),
-            executor,
-            callback,
-            callback_data,
+            /// The context gets set in startup()
+            context: UnsafeCell::new(None),
         })
     }
 
-    /// Wake up soon and poll our future.
+    // Synchronization handling
+    //
+    // This uses `state` as an atomic bitfield to manage access around our [UnsafeCell] fields and
+    // schedule do_wake calls.
+    //
+    // The general process for moving a future forward is:
+    //   - A thread sets the `STATE_LOCKED` bit
+    //   - That thread calls `schedule_do_wake()`
+    //   - `do_wake()` polls the future, then calls either [Self::continue_after_do_wake] or
+    //     [Self::complete_after_do_wake].
+    //
+    //  You can take references to the [UnsafeCell] fields:
+    //    - After setting `STATE_LOCKED`, before calling `schedule_do_wake()`
+    //    - In `do_wake()`, before unsetting `STATE_LOCKED`
+    //
+    //  Taking a ref to an [UnsafeCell] field must be after an Acquire operation on `state`.
+    //  Taking a &mut must be between an Acquire/Release pair.  The operations can be any
+    //  load/store, they don't need to set/unset `STATE_LOCKED`.  This is probably overkill since
+    //  scheduling things with the [ForeignExecutor] should ensure proper ordering, but let's err
+    //  on the side of safety.
+
+    const STATE_LOCKED: u8 = 1 << 0;
+    const STATE_INITIALIZED: u8 = 1 << 1;
+    const STATE_WAKE_CALLED: u8 = 1 << 2;
+
+    /// Startup a new future
     ///
-    /// This method ensures that a call to `do_wake()` is scheduled.  Only one call will be scheduled
-    /// at any time, even if `wake_soon` called multiple times from multiple threads.
-    pub fn wake(self: Pin<Arc<Self>>) {
-        if self.wake_counter.fetch_add(1, Ordering::Relaxed) == 0 {
-            self.schedule_do_wake();
+    /// This starts the process to drive the future to completion, then call the foreign callback.
+    /// `startup()` can only be called once.
+    fn startup(
+        self: Arc<Self>,
+        executor_handle: ForeignExecutorHandle,
+        callback: T::FutureCallback,
+        callback_data: *const (),
+    ) {
+        match self.state.compare_exchange(
+            // The state should previously have no bits set
+            0,
+            // We want to lock the state and schedule a wake
+            Self::STATE_LOCKED,
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => {
+                // SAFETY: we used Ordering::Acquire to lock the state and will use
+                // Ordering::Release to set `STATE_INITIALIZED`.
+                let context = unsafe { &mut *self.context.get() };
+                if context.is_none() {
+                    *context = Some(RustFutureContext {
+                        executor: ForeignExecutor::new(executor_handle),
+                        callback,
+                        callback_data,
+                    });
+                    self.state.store(
+                        Self::STATE_LOCKED | Self::STATE_INITIALIZED | Self::STATE_WAKE_CALLED,
+                        Ordering::Release,
+                    );
+                    self.schedule_do_wake(executor_handle);
+                } else {
+                    log::error!("context already set in startup()")
+                }
+            }
+            Err(state) => {
+                log::error!("Unexpected state in startup(): {state:b}");
+            }
+        }
+    }
+
+    /// Wake up soon and poll our future.
+    fn wake(self: Arc<Self>) {
+        // Try to lock the state.  Ensure that the STATE_WAKE_CALLED bit is set regardless.
+        let prev_state = self.state.fetch_or(
+            Self::STATE_LOCKED | Self::STATE_WAKE_CALLED,
+            Ordering::Acquire,
+        );
+        if prev_state & Self::STATE_INITIALIZED == 0 {
+            log::error!("Uninitialized state in wake(): {prev_state:b}");
+        } else if (prev_state & Self::STATE_LOCKED) == 0 {
+            // SAFETY: we used Ordering::Acquire to lock the state
+            let context = unsafe { &*self.context.get() };
+            match context {
+                Some(context) => self.schedule_do_wake(context.executor.handle),
+                None => log::error!("Context not set in wake()"),
+            }
+        }
+    }
+
+    /// Start a `do_wake()` call
+    fn start_do_wake<'a>(&'a self) -> Option<Pin<&'a mut F>> {
+        // Unset the STATE_WAKE_CALLED bit so that we can test it at the end of start_do_wake.
+        let prev_state = self
+            .state
+            .fetch_and(!Self::STATE_WAKE_CALLED, Ordering::Acquire);
+        if prev_state & (Self::STATE_INITIALIZED | Self::STATE_LOCKED)
+            == Self::STATE_INITIALIZED | Self::STATE_LOCKED
+        {
+            // SAFETY:
+            //  - Getting a &mut to self.future is safe because:
+            //    - A previous caller locked the state for us
+            //    - We called Ordering::Acquire when unsetting the STATE_WAKE_CALLED bit
+            //    - continue_after_do_wake() uses Ordering::Release
+            //    - complete_after_do_wake() keeps the state locked, so there will be no more access
+            //      to self.future.
+            //  - Pin::new_unchecked() is safe because:
+            //    - This is the only time we take a &mut to self.future
+            //    - We never take a &mut to Self
+            //    - RustFuture is private to this module so no other code can take a &mut to it.
+            unsafe { Some(Pin::new_unchecked(&mut *self.future.get())) }
+        } else {
+            log::error!("Unexpected state in start_do_wake(): {prev_state:b}");
+            None
+        }
+    }
+
+    /// Continue after a call to `do_wake()` where the future was still pending
+    fn continue_after_do_wake(self: Arc<Self>) {
+        // If STATE_WAKE_CALLED is still not set, then unset the STATE_LOCKED bit.
+        match self.state.compare_exchange(
+            Self::STATE_INITIALIZED | Self::STATE_LOCKED,
+            Self::STATE_INITIALIZED,
+            Ordering::Release,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => (),
+            Err(Self::STATE_INITIALIZED | Self::STATE_LOCKED | Self::STATE_WAKE_CALLED) => {
+                // compare_exchange doesn't do a Release when the comparison fails, so do one now
+                self.state.fetch_or(0, Ordering::Release);
+                // SAFETY: the state is still locked and we used an Ordering::Acquire operation in
+                // start_do_wake().
+                let context = unsafe { &*self.context.get() };
+                match context {
+                    Some(context) => self.schedule_do_wake(context.executor.handle),
+                    None => log::error!("Context not set in continue_after_do_wake()"),
+                }
+            }
+            Err(state) => log::error!("Unexpected state in continue_after_do_wake(): {state:b}"),
+        }
+    }
+
+    /// Complete the future after a call to `do_wake()` where the future was ready
+    fn complete_after_do_wake(self: Arc<Self>, result: T::ReturnType, out_status: RustCallStatus) {
+        // We can take a reference to context because we never unlocked the state
+        match unsafe { &*self.context.get() } {
+            // Call the callback keep the STATE_LOCKED set since we must not poll future again
+            Some(context) => T::invoke_future_callback(
+                context.callback,
+                context.callback_data,
+                result,
+                out_status,
+            ),
+            None => log::error!("context not set in complete_after_do_wake()"),
+        }
+    }
+
+    fn wake_from_weak(weak: &Weak<Self>) {
+        if let Some(rust_future) = weak.upgrade() {
+            rust_future.wake();
         }
     }
 
@@ -213,14 +405,18 @@ where
     ///
     /// `self` is consumed but _NOT_ dropped, it's purposely leaked via `into_raw()`.
     /// `wake_callback()` will call `from_raw()` to reverse the leak.
-    fn schedule_do_wake(self: Pin<Arc<Self>>) {
+    fn schedule_do_wake(self: Arc<Self>, executor_handle: ForeignExecutorHandle) {
         unsafe {
-            let handle = self.executor.handle;
-            let raw_ptr = Arc::into_raw(Pin::into_inner_unchecked(self));
+            let raw_ptr = Arc::into_raw(self);
             // SAFETY: The `into_raw()` / `from_raw()` contract guarantees that our executor cannot
             // be dropped before we call `from_raw()` on the raw pointer. This means we can safely
             // use its handle to schedule a callback.
-            if !schedule_raw(handle, 0, Self::wake_callback, raw_ptr as *const ()) {
+            if !schedule_raw(
+                executor_handle,
+                0,
+                Self::wake_callback,
+                raw_ptr as *const (),
+            ) {
                 // There was an error scheduling the callback, drop the arc reference since
                 // `wake_callback()` will never be called
                 //
@@ -236,7 +432,7 @@ where
     extern "C" fn wake_callback(self_ptr: *const (), status_code: RustTaskCallbackCode) {
         // No matter what, call `Arc::from_raw()` to balance the `Arc::into_raw()` call in
         // `schedule_do_wake()`.
-        let task = unsafe { Pin::new_unchecked(Arc::from_raw(self_ptr as *const Self)) };
+        let task = unsafe { Arc::from_raw(self_ptr as *const Self) };
         if status_code == RustTaskCallbackCode::Success {
             // Only drive the future forward on `RustTaskCallbackCode::Success`.
             // `RUST_TASK_CALLBACK_CANCELED` indicates the foreign executor has been cancelled /
@@ -246,14 +442,12 @@ where
     }
 
     // Does the work for wake, we take care to ensure this always runs in a serialized fashion.
-    fn do_wake(self: Pin<Arc<Self>>) {
-        // Store 1 in `waker_counter`, which we'll use at the end of this call.
-        self.wake_counter.store(1, Ordering::Relaxed);
+    fn do_wake(self: Arc<Self>) {
+        let future = match self.start_do_wake() {
+            Some(future) => future,
+            None => return, // Note: start_do_wake() already logged an error for us
+        };
 
-        // Pin<&mut> from our UnsafeCell.  &mut is is safe, since this is the only reference we
-        // ever take to `self.future` and calls to this function are serialized.  Pin<> is safe
-        // since we never move the future out of `self.future`.
-        let future = unsafe { Pin::new_unchecked(&mut *self.future.get()) };
         let waker = self.make_waker();
 
         // Run the poll and lift the result if it's ready
@@ -274,67 +468,27 @@ where
 
         // All the main work is done, time to finish up
         match result {
-            Some(Poll::Pending) => {
-                // Since we set `wake_counter` to 1 at the start of this function...
-                //   - If it's > 1 now, then some other code tried to wake us while we were polling
-                //     the future.  Schedule another poll in this case.
-                //   - If it's still 1, then exit after decrementing it.  The next call to `wake()`
-                //     will schedule a poll.
-                if self.wake_counter.fetch_sub(1, Ordering::Relaxed) > 1 {
-                    self.schedule_do_wake();
-                }
-            }
-            // Success!  Call our callback.
-            //
-            // Don't decrement `wake_counter'.  This way, if wake() is called in the future, we
-            // will just ignore it
-            Some(Poll::Ready(v)) => {
-                T::invoke_future_callback(self.callback, self.callback_data, v, out_status);
-            }
+            Some(Poll::Pending) => self.continue_after_do_wake(),
+            Some(Poll::Ready(v)) => self.complete_after_do_wake(v, out_status),
             // Error/panic polling the future.  Call the callback with a default value.
-            // `out_status` contains the error code and serialized error.  Again, don't decrement
-            // `wake_counter'.
-            None => {
-                T::invoke_future_callback(
-                    self.callback,
-                    self.callback_data,
-                    T::ReturnType::ffi_default(),
-                    out_status,
-                );
-            }
+            // `out_status` contains the error code and serialized error.
+            None => self.complete_after_do_wake(T::ReturnType::ffi_default(), out_status),
         };
     }
 
-    fn make_waker(self: &Pin<Arc<Self>>) -> Waker {
+    fn make_waker(self: &Arc<Self>) -> Waker {
         // This is safe as long as we implement the waker interface correctly.
         unsafe {
             Waker::from_raw(RawWaker::new(
-                self.clone().into_raw(),
+                Arc::downgrade(self).into_raw() as *const (),
                 &Self::RAW_WAKER_VTABLE,
             ))
         }
     }
 
-    /// SAFETY: Ensure that all calls to `into_raw()` are balanced with a call to `from_raw()`
-    fn into_raw(self: Pin<Arc<Self>>) -> *const () {
-        unsafe { Arc::into_raw(Pin::into_inner_unchecked(self)) as *const () }
-    }
-
-    /// Consume a pointer to get an arc
-    ///
-    /// SAFETY: The pointer must have come from `into_raw()` or was cloned with `raw_clone()`.
-    /// Once a pointer is passed into this function, it should no longer be used.
-    fn from_raw(self_ptr: *const ()) -> Pin<Arc<Self>> {
-        unsafe { Pin::new_unchecked(Arc::from_raw(self_ptr as *const Self)) }
-    }
-
     // Implement the waker interface by defining a RawWakerVTable
     //
-    // We could also handle this by implementing the `Wake` interface, but that uses an `Arc<T>`
-    // instead of a `Pin<Arc<T>>` and in theory it could try to move the `T` value out of the arc
-    // with something like `Arc::try_unwrap()` which would break the pinning contract with
-    // `Future`.  Implementing this using `RawWakerVTable` allows us verify that this doesn't
-    // happen.
+    // Each function inputs a data pointer that has been created from `Weak::<Self>::into_raw()`
     const RAW_WAKER_VTABLE: RawWakerVTable = RawWakerVTable::new(
         Self::raw_clone,
         Self::raw_wake,
@@ -345,29 +499,80 @@ where
     /// This function will be called when the `RawWaker` gets cloned, e.g. when
     /// the `Waker` in which the `RawWaker` is stored gets cloned.
     unsafe fn raw_clone(self_ptr: *const ()) -> RawWaker {
-        Arc::increment_strong_count(self_ptr as *const Self);
-        RawWaker::new(self_ptr, &Self::RAW_WAKER_VTABLE)
+        let weak = Weak::from_raw(self_ptr as *const Self);
+        let raw_waker = RawWaker::new(
+            weak.clone().into_raw() as *const (),
+            &Self::RAW_WAKER_VTABLE,
+        );
+        // `self_ptr` represents a reference.  Use forget() to avoid decrementing the weak count.
+        std::mem::forget(weak);
+        raw_waker
     }
 
     /// This function will be called when `wake` is called on the `Waker`. It
     /// must wake up the task associated with this `RawWaker`.
     unsafe fn raw_wake(self_ptr: *const ()) {
-        Self::from_raw(self_ptr).wake()
+        Self::wake_from_weak(&Weak::from_raw(self_ptr as *const Self))
     }
 
     /// This function will be called when `wake_by_ref` is called on the
     /// `Waker`. It must wake up the task associated with this `RawWaker`.
     unsafe fn raw_wake_by_ref(self_ptr: *const ()) {
-        // This could be optimized by only incrementing the strong count if we end up calling
-        // `schedule_do_wake()`, but it's not clear that's worth the extra complexity
-        Arc::increment_strong_count(self_ptr as *const Self);
-        Self::from_raw(self_ptr).wake()
+        let weak = Weak::from_raw(self_ptr as *const Self);
+        Self::wake_from_weak(&weak);
+        // `self_ptr` represents a reference.  Use forget() to avoid decrementing the weak count.
+        std::mem::forget(weak);
     }
 
     /// This function gets called when a `RawWaker` gets dropped.
-    /// This function gets called when a `RawWaker` gets dropped.
     unsafe fn raw_drop(self_ptr: *const ()) {
-        drop(Self::from_raw(self_ptr))
+        drop(Weak::from_raw(self_ptr as *const Self));
+    }
+}
+
+/// VTable to implement the RustFuture FFI.
+///
+/// This is an array of function pointers that use [RustFutureHandle] and forward the call to
+/// the corresponding `RustFuture` method.
+///
+/// The main point is to get around the fact that the `F` type in `RustFuture` is an anonymous
+/// type, which can't be named.
+#[doc(hidden)]
+pub struct RustFutureVTable<T, UT>
+where
+    T: FfiConverter<UT>,
+{
+    pub startup: unsafe fn(RustFutureHandle, ForeignExecutorHandle, T::FutureCallback, *const ()),
+    pub free: unsafe fn(RustFutureHandle),
+}
+
+impl<T, UT> RustFutureVTable<T, UT>
+where
+    T: FfiConverter<UT>,
+{
+    /// Create a RustFutureVTable
+    ///
+    /// Inputs an async function that inputs a single tuple argument and outputs the Future that
+    /// will be wrapped by [RustFuture].
+    pub const fn new<Func, Args, F>(_: &Func) -> Self
+    where
+        Func: Fn(Args) -> F,
+        F: Future<Output = T> + Send,
+    {
+        unsafe {
+            Self {
+                startup: |handle, executor_handle, callback, callback_data| {
+                    let arc = Arc::from_raw(handle.0 as *const RustFuture<F, T, UT>);
+                    // Create a new Arc to run startup
+                    Arc::clone(&arc).startup(executor_handle, callback, callback_data);
+                    // Forget the original Arc, since it represented a reference
+                    std::mem::forget(arc);
+                },
+                free: |handle: RustFutureHandle| {
+                    drop(Arc::from_raw(handle.0 as *const RustFuture<F, T, UT>))
+                },
+            }
+        }
     }
 }
 
@@ -402,7 +607,6 @@ mod tests {
     }
 
     extern "C" fn mock_foreign_callback(data_ptr: *const (), value: i8, status: RustCallStatus) {
-        println!("mock_foreign_callback: {value} {data_ptr:?}");
         let result: &mut Option<MockForeignResult> =
             unsafe { &mut *(data_ptr as *mut Option<MockForeignResult>) };
         *result = Some(MockForeignResult { value, status });
@@ -410,35 +614,38 @@ mod tests {
 
     // Bundles everything together so that we can run some tests
     struct TestFutureEnvironment {
-        rust_future: Pin<Arc<TestRustFuture>>,
+        rust_future: Arc<TestRustFuture>,
         foreign_result: Pin<Box<Option<MockForeignResult>>>,
+        eventloop: Arc<MockEventLoop>,
     }
 
     impl TestFutureEnvironment {
         fn new(eventloop: &Arc<MockEventLoop>) -> Self {
             let foreign_result = Box::pin(None);
-            let foreign_result_ptr = &*foreign_result as *const Option<_> as *const ();
 
-            let rust_future = TestRustFuture::new(
-                MockFuture(None),
-                eventloop.new_handle(),
-                mock_foreign_callback,
-                foreign_result_ptr,
-            );
+            let rust_future = TestRustFuture::new(MockFuture(None));
             Self {
                 rust_future,
                 foreign_result,
+                eventloop: Arc::clone(eventloop),
             }
         }
 
+        fn startup(&self) {
+            let foreign_result_ptr = &*self.foreign_result as *const Option<_> as *const ();
+            Arc::clone(&self.rust_future).startup(
+                self.eventloop.new_handle(),
+                mock_foreign_callback,
+                foreign_result_ptr,
+            );
+        }
+
         fn wake(&self) {
-            self.rust_future.clone().wake();
+            RustFuture::wake(Arc::clone(&self.rust_future))
         }
 
         fn rust_future_weak(&self) -> Weak<TestRustFuture> {
-            // It seems like there's not a great way to get an &Arc from a Pin<Arc>, so we need to
-            // do a little dance here
-            Arc::downgrade(&Pin::into_inner(Clone::clone(&self.rust_future)))
+            Arc::downgrade(&self.rust_future)
         }
 
         fn complete_future(&self, value: Result<bool, String>) {
@@ -456,8 +663,8 @@ mod tests {
         assert!(test_env.foreign_result.is_none());
         assert_eq!(eventloop.call_count(), 0);
 
-        // wake() should schedule a call
-        test_env.wake();
+        // startup() should schedule a wakeup call
+        test_env.startup();
         assert_eq!(eventloop.call_count(), 1);
 
         // When that call runs, we should still not have a result yet
@@ -491,7 +698,7 @@ mod tests {
         let eventloop = MockEventLoop::new();
         let mut test_env = TestFutureEnvironment::new(&eventloop);
         test_env.complete_future(Err("Something went wrong".into()));
-        test_env.wake();
+        test_env.startup();
         eventloop.run_all_calls();
         let result = test_env
             .foreign_result
@@ -511,46 +718,28 @@ mod tests {
     }
 
     #[test]
-    fn test_raw_clone_and_drop() {
+    fn test_ref_counts() {
+        // Create a rust future and 2 wakers.
+        //
+        // The future itself should hold a strong reference and each waker should hold a weakref
         let test_env = TestFutureEnvironment::new(&MockEventLoop::new());
         let waker = test_env.rust_future.make_waker();
+        let waker2 = test_env.rust_future.make_waker();
+        // Create one more Weak to handle the reference counting.
         let weak_ref = test_env.rust_future_weak();
-        assert_eq!(weak_ref.strong_count(), 2);
-        let waker2 = waker.clone();
-        assert_eq!(weak_ref.strong_count(), 3);
+
+        assert_eq!((weak_ref.strong_count(), weak_ref.weak_count()), (1, 3));
+
+        // Dropping each waker should reduce the weak count by one
         drop(waker);
-        assert_eq!(weak_ref.strong_count(), 2);
+        assert_eq!((weak_ref.strong_count(), weak_ref.weak_count()), (1, 2));
         drop(waker2);
-        assert_eq!(weak_ref.strong_count(), 1);
+        assert_eq!((weak_ref.strong_count(), weak_ref.weak_count()), (1, 1));
+
+        // Dropping the RustFuture should reduce the strong count to 0 (which also makes the weak
+        // count 0, even though we still have a weak ref).
         drop(test_env);
         assert_eq!(weak_ref.strong_count(), 0);
-        assert!(weak_ref.upgrade().is_none());
-    }
-
-    #[test]
-    fn test_raw_wake() {
-        let eventloop = MockEventLoop::new();
-        let test_env = TestFutureEnvironment::new(&eventloop);
-        let waker = test_env.rust_future.make_waker();
-        let weak_ref = test_env.rust_future_weak();
-        // `test_env` and `waker` both hold a strong reference to the `RustFuture`
-        assert_eq!(weak_ref.strong_count(), 2);
-
-        // wake_by_ref() should schedule a wake
-        waker.wake_by_ref();
-        assert_eq!(eventloop.call_count(), 1);
-
-        // Once the wake runs, the strong could should not have changed
-        eventloop.run_all_calls();
-        assert_eq!(weak_ref.strong_count(), 2);
-
-        // wake() should schedule a wake
-        waker.wake();
-        assert_eq!(eventloop.call_count(), 1);
-
-        // Once the wake runs, the strong have decremented, since wake() consumes the waker
-        eventloop.run_all_calls();
-        assert_eq!(weak_ref.strong_count(), 1);
     }
 
     // Test trying to create a RustFuture before the executor is shutdown.
@@ -577,7 +766,7 @@ mod tests {
         let test_env = TestFutureEnvironment::new(&eventloop);
         let weak_ref = test_env.rust_future_weak();
         test_env.complete_future(Ok(true));
-        test_env.wake();
+        test_env.startup();
         eventloop.shutdown();
         eventloop.run_all_calls();
 

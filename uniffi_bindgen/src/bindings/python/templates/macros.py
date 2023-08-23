@@ -103,10 +103,12 @@ _rust_call(
     async def {{ py_method_name }}(self, {% call arg_list_decl(meth) %}):
         {%- call setup_args_extra_indent(meth) %}
         return await _rust_call_async(
-            _UniffiLib.{{ func.ffi_func().name() }},
-            {{ func.result_type().borrow()|async_callback_fn }},
+            _UniffiLib.{{ meth.ffi_func().name() }},
+            _UniffiLib.{{ meth.rust_future_startup_func().name() }},
+            _UniffiLib.{{ meth.rust_future_free_func().name() }},
+            {{ meth.result_type().borrow()|async_callback_fn }},
             self._pointer,
-            {% call arg_list_lowered(func) %}
+            {% call arg_list_lowered(meth) %}
         )
 
 {%- else -%}

@@ -236,7 +236,7 @@ Task {
 counter.enter()
 Task {
 	let task = Task {
-	    try! await useSharedResource(options: SharedResourceOptions(releaseAfterMs: 100, timeoutMs: 1000))
+	    try! await useSharedResource(options: SharedResourceOptions(releaseAfterMs: 1000, timeoutMs: 100))
 	}
 
 	// Wait some time to ensure the task has locked the shared resource
@@ -249,7 +249,7 @@ Task {
 
 	// Try accessing the shared resource again.  The initial task should release the shared resource
 	// before the timeout expires.
-	try! await useSharedResource(options: SharedResourceOptions(releaseAfterMs: 0, timeoutMs: 1000))
+	try! await useSharedResource(options: SharedResourceOptions(releaseAfterMs: 0, timeoutMs: 100))
 	counter.leave()
 }
 

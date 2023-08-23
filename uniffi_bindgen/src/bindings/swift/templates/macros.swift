@@ -1,7 +1,5 @@
 {#
 // Template to call into rust. Used in several places.
-// Variable names in `arg_list_decl` should match up with arg lists
-// passed to rust via `arg_list_lowered`
 #}
 
 {%- macro to_ffi_call(func) -%}
@@ -12,7 +10,12 @@
     {%- else -%}
         rustCall() {
     {%- endmatch %}
-    {{ func.ffi_func().name() }}({% call arg_list_lowered(func) -%} $0)
+    {{ func.ffi_func().name() }}(
+        {%- for arg in func.arguments() %}
+        {{ arg|lower_arg }},
+        {%- endfor %}
+        $0
+    )
 }
 {%- endmacro -%}
 
@@ -25,16 +28,14 @@
     rustCall() {
     {% endmatch %}
     {{ func.ffi_func().name() }}(
-        {{- prefix }}, {% call arg_list_lowered(func) -%} $0
+        {{- prefix }},
+        {%- for arg in func.arguments() %}
+        {{ arg|lower_arg }},
+        {%- endfor %}
+        $0
     )
 }
 {%- endmacro %}
-
-{%- macro arg_list_lowered(func) %}
-    {%- for arg in func.arguments() %}
-        {{ arg|lower_fn }}({{ arg.name()|var_name }}),
-    {%- endfor %}
-{%- endmacro -%}
 
 {#-
 // Arglist as used in Swift declarations of methods, functions and constructors.

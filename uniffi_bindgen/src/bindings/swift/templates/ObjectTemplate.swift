@@ -44,24 +44,32 @@ public class {{ type_name }}: {{ obj.name() }}Protocol {
     {%- if meth.is_async() %}
 
     public func {{ meth.name()|fn_name }}({%- call swift::arg_list_decl(meth) -%}) async {% call swift::throws(meth) %}{% match meth.return_type() %}{% when Some with (return_type) %} -> {{ return_type|type_name }}{% when None %}{% endmatch %} {
+        // Normally this is handled by rustCall(), but async functions don't go use that since they
+        // don't have a RustCallStatusArg
+        uniffiEnsureInitialized()
         // Suspend the function and call the scaffolding function, passing it a callback handler from
         // `AsyncTypes.swift`
         //
         // Make sure to hold on to a reference to the continuation in the top-level scope so that
         // it's not freed before the callback is invoked.
         var continuation: {{ meth.result_type().borrow()|future_continuation_type }}? = nil
+        let rustFutureHandle = {{ meth.ffi_func().name() }}(
+            self.pointer,
+            {%- for arg in meth.arguments() %}
+            {{ arg|lower_arg }}{% if !loop.last %},{% endif %}
+            {%- endfor %}
+        )
+        defer {
+            {{ meth.rust_future_free_func().name() }}(rustFutureHandle)
+        }
         return {% call swift::try(meth) %} await withCheckedThrowingContinuation {
             continuation = $0
-            try! rustCall() {
-                {{ meth.ffi_func().name() }}(
-                    self.pointer,
-                    {% call swift::arg_list_lowered(meth) %}
-                    FfiConverterForeignExecutor.lower(UniFfiForeignExecutor()),
-                    {{ meth.result_type().borrow()|future_callback }},
-                    &continuation,
-                    $0
-                )
-            }
+            {{ meth.rust_future_startup_func().name() }}(
+                rustFutureHandle,
+                FfiConverterForeignExecutor.lower(UniFfiForeignExecutor()),
+                {{ meth.result_type().borrow()|future_callback }},
+                &continuation
+            )
         }
     }
 

@@ -3,8 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use proc_macro2::{Ident, TokenStream};
-use quote::quote;
-use std::iter;
+use quote::{format_ident, quote};
 
 use super::attributes::{AsyncRuntime, ExportAttributeArguments};
 use crate::fnsig::{FnKind, FnSignature, NamedArg};
@@ -78,8 +77,8 @@ pub(super) fn gen_method_scaffolding(
 
 // Pieces of code for the scaffolding function
 struct ScaffoldingBits {
-    /// Parameters for the scaffolding function
-    params: Vec<TokenStream>,
+    /// Self argument of the scaffolding function (which is not tracked by FnSignature)
+    self_arg: Option<NamedArg>,
     /// Statements to execute before `rust_fn_call`
     pre_fn_call: TokenStream,
     /// Tokenstream for the call to the actual Rust function
@@ -89,11 +88,10 @@ struct ScaffoldingBits {
 impl ScaffoldingBits {
     fn new_for_function(sig: &FnSignature) -> Self {
         let ident = &sig.ident;
-        let params: Vec<_> = sig.args.iter().map(NamedArg::scaffolding_param).collect();
         let param_lifts = sig.lift_exprs();
 
         Self {
-            params,
+            self_arg: None,
             pre_fn_call: quote! {},
             rust_fn_call: quote! { #ident(#(#param_lifts,)*) },
         }
@@ -101,22 +99,19 @@ impl ScaffoldingBits {
 
     fn new_for_method(sig: &FnSignature, self_ident: &Ident, is_trait: bool) -> Self {
         let ident = &sig.ident;
-        let ffi_converter = if is_trait {
-            quote! {
-                <::std::sync::Arc<dyn #self_ident> as ::uniffi::FfiConverter<crate::UniFfiTag>>
-            }
+        let self_type = if is_trait {
+            quote! { ::std::sync::Arc<dyn #self_ident> }
         } else {
-            quote! {
-                <::std::sync::Arc<#self_ident> as ::uniffi::FfiConverter<crate::UniFfiTag>>
-            }
+            quote! { ::std::sync::Arc<#self_ident> }
         };
-        let params: Vec<_> = iter::once(quote! { uniffi_self_lowered: #ffi_converter::FfiType })
-            .chain(sig.scaffolding_params())
-            .collect();
+        let ffi_converter = quote! { <#self_type as ::uniffi::FfiConverter<crate::UniFfiTag>> };
         let param_lifts = sig.lift_exprs();
 
         Self {
-            params,
+            self_arg: Some(NamedArg::new(
+                format_ident!("uniffi_self_lowered"),
+                self_type,
+            )),
             pre_fn_call: quote! {
                 let uniffi_self = #ffi_converter::try_lift(uniffi_self_lowered).unwrap_or_else(|err| {
                     ::std::panic!("Failed to convert arg 'self': {}", err)
@@ -128,11 +123,10 @@ impl ScaffoldingBits {
 
     fn new_for_constructor(sig: &FnSignature, self_ident: &Ident) -> Self {
         let ident = &sig.ident;
-        let params: Vec<_> = sig.args.iter().map(NamedArg::scaffolding_param).collect();
         let param_lifts = sig.lift_exprs();
 
         Self {
-            params,
+            self_arg: None,
             pre_fn_call: quote! {},
             rust_fn_call: quote! { #self_ident::#ident(#(#param_lifts,)*) },
         }
@@ -148,7 +142,7 @@ fn gen_ffi_function(
     arguments: &ExportAttributeArguments,
 ) -> syn::Result<TokenStream> {
     let ScaffoldingBits {
-        params,
+        self_arg,
         pre_fn_call,
         rust_fn_call,
     } = match &sig.kind {
@@ -163,13 +157,19 @@ fn gen_ffi_function(
     let ffi_ident = sig.scaffolding_fn_ident()?;
     let name = &sig.name;
     let return_ty = &sig.return_ty;
+    let param_names: Vec<_> = self_arg.iter().chain(&sig.args).map(|a| &a.ident).collect();
+    let param_types: Vec<_> = self_arg
+        .iter()
+        .chain(&sig.args)
+        .map(NamedArg::ffi_type)
+        .collect();
 
     Ok(if !sig.is_async {
         quote! {
             #[doc(hidden)]
             #[no_mangle]
             pub extern "C" fn #ffi_ident(
-                #(#params,)*
+                #(#param_names: #param_types,)*
                 call_status: &mut ::uniffi::RustCallStatus,
             ) -> <#return_ty as ::uniffi::FfiConverter<crate::UniFfiTag>>::ReturnType {
                 ::uniffi::deps::log::debug!(#name);
@@ -180,33 +180,59 @@ fn gen_ffi_function(
             }
         }
     } else {
-        let mut future_expr = rust_fn_call;
-        if matches!(arguments.async_runtime, Some(AsyncRuntime::Tokio(_))) {
-            future_expr = quote! { ::uniffi::deps::async_compat::Compat::new(#future_expr) }
-        }
+        let future_startup_ident = sig.scaffolding_future_method_ident("startup")?;
+        let future_free_ident = sig.scaffolding_future_method_ident("free")?;
+        let vtable_ident = format_ident!(
+            "UNIFFI_FUTURE_VTABLE_{}",
+            ffi_ident.to_string().to_ascii_uppercase()
+        );
+
+        // Function that maps the output of the async function to the future that we will actually
+        // use.  This is needed to handle the `async_runtime` argument.
+        let future_mapper = match &arguments.async_runtime {
+            None => quote! { ::std::convert::identity },
+            Some(AsyncRuntime::Tokio(_)) => quote! { ::uniffi::deps::async_compat::Compat::new },
+        };
+
+        // Closure a that wraps the async function to:
+        //   - input a single tuple of scaffolding args
+        //   - send the result through `future_mapper`
+        //
+        //  This is used to construct the RustFutureVTable
+        let wrapped_rust_fn = quote! {
+            |args: (#(#param_types,)*)| {
+                let (#(#param_names,)*) = args;
+                #pre_fn_call
+                #future_mapper(#rust_fn_call)
+            }
+        };
 
         quote! {
+            const #vtable_ident: ::uniffi::RustFutureVTable<#return_ty, crate::UniFfiTag> = ::uniffi::RustFutureVTable::new(&#wrapped_rust_fn);
+
             #[doc(hidden)]
             #[no_mangle]
-            pub extern "C" fn #ffi_ident(
-                #(#params,)*
-                uniffi_executor_handle: ::uniffi::ForeignExecutorHandle,
-                uniffi_callback: <#return_ty as ::uniffi::FfiConverter<crate::UniFfiTag>>::FutureCallback,
-                uniffi_callback_data: *const (),
-                uniffi_call_status: &mut ::uniffi::RustCallStatus,
-            ) {
+            pub extern "C" fn #ffi_ident(#(#param_names: #param_types,)*) -> ::uniffi::RustFutureHandle {
                 ::uniffi::deps::log::debug!(#name);
-                ::uniffi::rust_call(uniffi_call_status, || {
-                    #pre_fn_call;
-                    let uniffi_rust_future = ::uniffi::RustFuture::<_, #return_ty, crate::UniFfiTag>::new(
-                        #future_expr,
-                        uniffi_executor_handle,
-                        uniffi_callback,
-                        uniffi_callback_data
-                    );
-                    uniffi_rust_future.wake();
-                    Ok(())
-                });
+                // Use the same closure as the RustFutureVTable to make sure everything lines up
+                ::uniffi::rust_future_new::<_, _, crate::UniFfiTag>((#wrapped_rust_fn)((#(#param_names,)*)))
+            }
+
+            #[doc(hidden)]
+            #[no_mangle]
+            pub extern "C" fn #future_startup_ident(handle: ::uniffi::RustFutureHandle,
+                executor_handle: ::uniffi::ForeignExecutorHandle,
+                callback: <#return_ty as ::uniffi::FfiConverter<crate::UniFfiTag>>::FutureCallback,
+                callback_data: *const (),
+            )
+            {
+                unsafe { (#vtable_ident.startup)(handle, executor_handle, callback, callback_data) };
+            }
+
+            #[doc(hidden)]
+            #[no_mangle]
+            pub extern "C" fn #future_free_ident(handle: ::uniffi::RustFutureHandle) {
+                unsafe { (#vtable_ident.free)(handle) };
             }
         }
     })
