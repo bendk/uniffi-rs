@@ -127,9 +127,30 @@ impl FnSignature {
         Ok(Ident::new(&name, Span::call_site()))
     }
 
-    /// Scaffolding parameters expressions for each of our arguments
-    pub fn scaffolding_params(&self) -> impl Iterator<Item = TokenStream> + '_ {
-        self.args.iter().map(NamedArg::scaffolding_param)
+    /// Name of the scaffolding future method for async functions
+    pub fn scaffolding_future_method_ident(&self, method: &str) -> syn::Result<Ident> {
+        let mod_path = &self.mod_path;
+        let name = &self.name;
+        let name = match &self.kind {
+            FnKind::Function => uniffi_meta::fn_future_method_symbol_name(mod_path, name, method),
+            FnKind::Method { self_ident } | FnKind::TraitMethod { self_ident, .. } => {
+                uniffi_meta::method_future_method_symbol_name(
+                    mod_path,
+                    &ident_to_string(self_ident),
+                    name,
+                    method,
+                )
+            }
+            FnKind::Constructor { self_ident } => {
+                uniffi_meta::constructor_future_method_symbol_name(
+                    mod_path,
+                    &ident_to_string(self_ident),
+                    name,
+                    method,
+                )
+            }
+        };
+        Ok(Ident::new(&name, Span::call_site()))
     }
 
     /// Generate metadata items for this function
@@ -322,13 +343,6 @@ impl NamedArg {
         let ident = &self.ident;
         let ty = &self.ty;
         quote! { #ident: #ty }
-    }
-
-    /// Generate the scaffolding parameter for this Arg
-    pub(crate) fn scaffolding_param(&self) -> TokenStream {
-        let ident = &self.ident;
-        let ffi_type = self.ffi_type();
-        quote! { #ident: #ffi_type }
     }
 
     /// Generate the expression to lift the scaffolding parameter for this arg

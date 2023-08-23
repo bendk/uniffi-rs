@@ -23,7 +23,7 @@ mod metadata;
 // `docs/uniffi-versioning.md` for details.
 //
 // Once we get to 1.0, then we'll need to update the scheme to something like 100 + major_version
-pub const UNIFFI_CONTRACT_VERSION: u32 = 23;
+pub const UNIFFI_CONTRACT_VERSION: u32 = 24;
 
 /// Similar to std::hash::Hash.
 ///
@@ -150,6 +150,10 @@ impl FnMetadata {
     pub fn checksum_symbol_name(&self) -> String {
         fn_checksum_symbol_name(&self.module_path, &self.name)
     }
+
+    pub fn future_method_symbol_name(&self, method_name: &str) -> String {
+        fn_future_method_symbol_name(&self.module_path, &self.name, method_name)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -169,6 +173,15 @@ impl ConstructorMetadata {
 
     pub fn checksum_symbol_name(&self) -> String {
         constructor_checksum_symbol_name(&self.module_path, &self.self_name, &self.name)
+    }
+
+    pub fn future_method_symbol_name(&self, method_name: &str) -> String {
+        constructor_future_method_symbol_name(
+            &self.module_path,
+            &self.self_name,
+            &self.name,
+            method_name,
+        )
     }
 
     pub fn is_primary(&self) -> bool {
@@ -197,6 +210,15 @@ impl MethodMetadata {
     pub fn checksum_symbol_name(&self) -> String {
         method_checksum_symbol_name(&self.module_path, &self.self_name, &self.name)
     }
+
+    pub fn future_method_symbol_name(&self, method_name: &str) -> String {
+        method_future_method_symbol_name(
+            &self.module_path,
+            &self.self_name,
+            &self.name,
+            method_name,
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -222,6 +244,15 @@ impl TraitMethodMetadata {
 
     pub fn checksum_symbol_name(&self) -> String {
         method_checksum_symbol_name(&self.module_path, &self.trait_name, &self.name)
+    }
+
+    pub fn future_method_symbol_name(&self, method_name: &str) -> String {
+        method_future_method_symbol_name(
+            &self.module_path,
+            &self.trait_name,
+            &self.name,
+            method_name,
+        )
     }
 }
 

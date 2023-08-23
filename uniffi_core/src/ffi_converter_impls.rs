@@ -427,7 +427,7 @@ where
         .concat(V::TYPE_ID_META);
 }
 
-/// FFI support for ForeignSchedulers
+/// FFI support for [ForeignExecutor]
 ///
 /// These are passed over the FFI as opaque pointer-sized types representing the foreign executor.
 /// The foreign bindings may use an actual pointer to the executor object, or a usized integer

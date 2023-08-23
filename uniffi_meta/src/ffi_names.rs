@@ -64,3 +64,33 @@ pub fn method_checksum_symbol_name(namespace: &str, object_name: &str, name: &st
     let name = name.to_ascii_lowercase();
     format!("uniffi_{namespace}_checksum_method_{object_name}_{name}")
 }
+
+/// FFI symbol name for methods on the Future returned by an async function
+pub fn fn_future_method_symbol_name(namespace: &str, name: &str, future_method: &str) -> String {
+    let name = name.to_ascii_lowercase();
+    format!("uniffi_{namespace}_future_{future_method}_func_{name}")
+}
+
+/// FFI symbol name for methods on the Future returned by an async method
+pub fn method_future_method_symbol_name(
+    namespace: &str,
+    object_name: &str,
+    name: &str,
+    future_method: &str,
+) -> String {
+    let object_name = object_name.to_ascii_lowercase();
+    let name = name.to_ascii_lowercase();
+    format!("uniffi_{namespace}_future_{future_method}_method_{object_name}_{name}")
+}
+
+/// FFI symbol name for methods on the Future returned by an async constructor
+pub fn constructor_future_method_symbol_name(
+    namespace: &str,
+    object_name: &str,
+    name: &str,
+    future_method: &str,
+) -> String {
+    let object_name = object_name.to_ascii_lowercase();
+    let name = name.to_ascii_lowercase();
+    format!("uniffi_{namespace}_future_{future_method}_constructor_{object_name}_{name}")
+}

@@ -11,23 +11,21 @@ suspend fun {{ func.name()|fn_name }}({%- call kt::arg_list_decl(func) -%}){% ma
     // scaffolding function, passing it one of the callback handlers from `AsyncTypes.kt`.
     return coroutineScope {
         val scope = this
-        return@coroutineScope suspendCancellableCoroutine { continuation ->
-            try {
+        val rustFutureHandle = _UniFFILib.INSTANCE.{{ func.ffi_func().name() }}({% call kt::arg_list_lowered(func) %})
+        try {
+            return@coroutineScope suspendCancellableCoroutine { continuation ->
                 val callback = {{ func.result_type().borrow()|future_callback_handler }}(continuation)
                 uniffiActiveFutureCallbacks.add(callback)
                 continuation.invokeOnCancellation { uniffiActiveFutureCallbacks.remove(callback) }
-                rustCall { status ->
-                    _UniFFILib.INSTANCE.{{ func.ffi_func().name() }}(
-                        {% call kt::arg_list_lowered(func) %}
-                        FfiConverterForeignExecutor.lower(scope),
-                        callback,
-                        USize(0),
-                        status,
-                    )
-                }
-            } catch (e: Exception) {
-                continuation.resumeWithException(e)
+                _UniFFILib.INSTANCE.{{ func.rust_future_startup_func().name() }}(
+                    rustFutureHandle,
+                    FfiConverterForeignExecutor.lower(scope),
+                    callback,
+                    USize(0),
+                )
             }
+        } finally {
+            _UniFFILib.INSTANCE.{{ func.rust_future_free_func().name() }}(rustFutureHandle)
         }
     }
 }

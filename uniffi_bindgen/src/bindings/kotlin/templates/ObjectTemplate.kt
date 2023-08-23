@@ -61,26 +61,23 @@ class {{ type_name }}(
         // scaffolding function, passing it one of the callback handlers from `AsyncTypes.kt`.
         return coroutineScope {
             val scope = this
-            return@coroutineScope suspendCancellableCoroutine { continuation ->
-                try {
+            val rustFutureHandle = callWithPointer { thisPtr ->
+                _UniFFILib.INSTANCE.{{ meth.ffi_func().name() }}(thisPtr, {% call kt::arg_list_lowered(meth) %})
+            }
+            try {
+                return@coroutineScope suspendCancellableCoroutine { continuation ->
                     val callback = {{ meth.result_type().borrow()|future_callback_handler }}(continuation)
                     uniffiActiveFutureCallbacks.add(callback)
                     continuation.invokeOnCancellation { uniffiActiveFutureCallbacks.remove(callback) }
-                    callWithPointer { thisPtr ->
-                        rustCall { status ->
-                            _UniFFILib.INSTANCE.{{ meth.ffi_func().name() }}(
-                                thisPtr,
-                                {% call kt::arg_list_lowered(meth) %}
-                                FfiConverterForeignExecutor.lower(scope),
-                                callback,
-                                USize(0),
-                                status,
-                            )
-                        }
-                    }
-                } catch (e: Exception) {
-                    continuation.resumeWithException(e)
+                    _UniFFILib.INSTANCE.{{ meth.rust_future_startup_func().name() }}(
+                        rustFutureHandle,
+                        FfiConverterForeignExecutor.lower(scope),
+                        callback,
+                        USize(0),
+                    )
                 }
+            } finally {
+                _UniFFILib.INSTANCE.{{ meth.rust_future_free_func().name() }}(rustFutureHandle)
             }
         }
     }

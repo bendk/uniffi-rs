@@ -466,7 +466,9 @@ impl SwiftCodeOracle {
             FfiType::FutureCallback { return_type } => {
                 format!("UniFfiFutureCallback{}", self.ffi_type_label(return_type))
             }
-            FfiType::FutureCallbackData => "UnsafeMutableRawPointer".into(),
+            FfiType::FutureCallbackData | FfiType::RustFutureHandle => {
+                "UnsafeMutableRawPointer".into()
+            }
         }
     }
 
@@ -529,6 +531,10 @@ pub mod filters {
         Ok(oracle().find(&as_type.as_type()).literal(literal))
     }
 
+    pub fn lower_arg(arg: &Argument) -> Result<String, askama::Error> {
+        Ok(format!("{}({})", lower_fn(arg)?, var_name(arg.name())?))
+    }
+
     /// Get the Swift type for an FFIType
     pub fn ffi_type_name(ffi_type: &FfiType) -> Result<String, askama::Error> {
         Ok(oracle().ffi_type_label(ffi_type))
@@ -562,7 +568,7 @@ pub mod filters {
                 "UniFfiFutureCallback{} _Nonnull",
                 SwiftCodeOracle.ffi_type_label_raw(return_type)
             ),
-            FfiType::FutureCallbackData => "void* _Nonnull".into(),
+            FfiType::FutureCallbackData | FfiType::RustFutureHandle => "void* _Nonnull".into(),
         })
     }
 

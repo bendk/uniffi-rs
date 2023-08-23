@@ -62,6 +62,8 @@ pub enum FfiType {
     },
     /// Opaque pointer passed to the FutureCallback
     FutureCallbackData,
+    /// Opaque pointer representing the Rust Future for an async function
+    RustFutureHandle,
     // TODO: you can imagine a richer structural typesystem here, e.g. `Ref<String>` or something.
     // We don't need that yet and it's possible we never will, so it isn't here for now.
 }
@@ -184,7 +186,26 @@ impl FfiFunction {
     ) {
         self.arguments = args.into_iter().collect();
         if self.is_async() {
-            self.arguments.extend([
+            // Async scaffolding functions always return RustFutureHandle.  The real return value
+            // is passed to the callback when when the Future is ready.
+            self.return_type = Some(FfiType::RustFutureHandle);
+            // Async scaffolding functions always succeed and don't have a `RustCallStatus`
+            // argument.
+            self.has_rust_call_status_arg = false;
+        } else {
+            self.return_type = return_type;
+        }
+    }
+
+    pub fn new_rust_future_startup(name: String, return_type: Option<FfiType>) -> Self {
+        Self {
+            name,
+            is_async: false,
+            arguments: vec![
+                FfiArgument {
+                    name: "handle".into(),
+                    type_: FfiType::RustFutureHandle,
+                },
                 // Used to schedule polls
                 FfiArgument {
                     name: "uniffi_executor".into(),
@@ -202,12 +223,24 @@ impl FfiFunction {
                     name: "uniffi_callback_data".into(),
                     type_: FfiType::FutureCallbackData,
                 },
-            ]);
-            // Async scaffolding functions never return values.  Instead, the callback is invoked
-            // when the Future is ready.
-            self.return_type = None;
-        } else {
-            self.return_type = return_type;
+            ],
+            return_type: None,
+            has_rust_call_status_arg: false,
+            ..FfiFunction::default()
+        }
+    }
+
+    pub fn new_rust_future_free(name: String) -> Self {
+        Self {
+            name,
+            is_async: false,
+            arguments: vec![FfiArgument {
+                name: "handle".into(),
+                type_: FfiType::RustFutureHandle,
+            }],
+            return_type: None,
+            has_rust_call_status_arg: false,
+            ..FfiFunction::default()
         }
     }
 }
