@@ -39,19 +39,19 @@
 //! fn hello() -> impl Future<Output = bool> { /* … */ }
 //! ```
 //!
-//! `uniffi-bindgen` will generate 3 scaffolding functions for each exported async function:
+//! `uniffi-bindgen` will generate several scaffolding functions for each exported async function:
 //!
 //! ```rust,ignore
-//! // The scaffolding function
+//! // The scaffolding function, which returns a RustFutureHandle
 //! #[no_mangle]
 //! pub extern "C" fn uniffi_fn_hello(
 //!     // ...If the function inputted arguments, the lowered versions would go here
-//! ) {
-//!     // rust_future_new wraps the future with [RustFuture] and returns a [RustFutureHandle]
-//!     rust_future_new::<_, bool, crate::UniFFITag,>(hello())
+//! ) -> RustFutureHandle {
+//!     ...
 //! }
 //!
 //! // The startup function, which inputs:
+//! //  - handle: RustFutureHandle
 //! //  - executor: used to schedule polls of the future
 //! //  - callback: invoked when the future is ready
 //! //  - callback_data: opaque pointer that's passed to the callback.  It points to any state needed to
@@ -72,17 +72,28 @@
 //!     uniffi_callback_data: *const (),
 //!     uniffi_call_status: &mut ::uniffi::RustCallStatus
 //! ) {
-//!    // Arranges for [RustFutureHandle::startup] to be run, which is tricky since the `F`
-//!    // parameter of RustFuture is anonymous.  See RustFutureVTable for how this works
+//!    ...
 //! }
+//!
+//! // The cancel function, which inputs:
+//! //
+//! // This causes the future to immediately stop and invoke the callback with the status code
+//! // RustCallStatusCode::Cancelled.
+//! //
+//! // Once the callback is called, Rust will stop polling the future.
+//! #[no_mangle]
+//! pub extern "C" fn uniffi_future_startup_cancel(handle: RustFutureHandle)
+//! ) {
+//!     ...
+//! }
+//!
 //! // Drop the future
 //! //
 //! // If this is called when the future is still Pending, then it will be dropped, releasing any
 //! // held resources and Rust will stop polling it.
 //! #[no_mangle]
 //! pub extern "C" fn uniffi_future_drop_hello(handle: RustFutureHandle) {
-//!    // Arranges for the [RustFuture] to be dropped, which is tricky since the `F`
-//!    // parameter of RustFuture is anonymous.  See RustFutureVTable for how this works
+//!   ...
 //! }
 //! ```
 //!
@@ -133,6 +144,7 @@
 use crate::{
     ffi::foreignexecutor::RustTaskCallbackCode, rust_call_with_out_status, schedule_raw,
     FfiConverter, FfiDefault, ForeignExecutor, ForeignExecutorHandle, RustCallStatus,
+    RustCallStatusCode,
 };
 use std::{
     cell::UnsafeCell,
@@ -169,6 +181,8 @@ where
     F: Future<Output = T> + Send,
     T: FfiConverter<UT>,
 {
+    // Bitfield used for synchronization.  See the `STATE_*` constants for details on how each bit
+    // it used.
     state: AtomicU8,
     future: UnsafeCell<F>,
     context: UnsafeCell<Option<RustFutureContext<T, UT>>>,
@@ -241,30 +255,14 @@ where
         })
     }
 
-    // Synchronization handling
-    //
-    // This uses `state` as an atomic bitfield to manage access around our [UnsafeCell] fields and
-    // schedule do_wake calls.
-    //
-    // The general process for moving a future forward is:
-    //   - A thread sets the `STATE_LOCKED` bit
-    //   - That thread calls `schedule_do_wake()`
-    //   - `do_wake()` polls the future, then calls either [Self::continue_after_do_wake] or
-    //     [Self::complete_after_do_wake].
-    //
-    //  You can take references to the [UnsafeCell] fields:
-    //    - After setting `STATE_LOCKED`, before calling `schedule_do_wake()`
-    //    - In `do_wake()`, before unsetting `STATE_LOCKED`
-    //
-    //  Taking a ref to an [UnsafeCell] field must be after an Acquire operation on `state`.
-    //  Taking a &mut must be between an Acquire/Release pair.  The operations can be any
-    //  load/store, they don't need to set/unset `STATE_LOCKED`.  This is probably overkill since
-    //  scheduling things with the [ForeignExecutor] should ensure proper ordering, but let's err
-    //  on the side of safety.
-
+    /// Lock bit on [Self::state].  Set this in order to access the [UnsafeCell] fields.
     const STATE_LOCKED: u8 = 1 << 0;
-    const STATE_INITIALIZED: u8 = 1 << 1;
-    const STATE_WAKE_CALLED: u8 = 1 << 2;
+    /// Needs wake bit on [Self::state].  If set, then wake was called and so [Self::do_wake] needs
+    /// to be executed at some point.
+    const STATE_NEEDS_DO_WAKE: u8 = 1 << 1;
+    /// Cancelled bit on [Self::state].  If set, then stop driving the future and call the foreign
+    /// callback with a [RustCallStatusCode::Cancelled] code.
+    const STATE_CANCELLED: u8 = 1 << 2;
 
     /// Startup a new future
     ///
@@ -279,14 +277,13 @@ where
         match self.state.compare_exchange(
             // The state should previously have no bits set
             0,
-            // We want to lock the state and schedule a wake
+            // We want to aquire a lock
             Self::STATE_LOCKED,
             Ordering::Acquire,
             Ordering::Relaxed,
         ) {
             Ok(_) => {
-                // SAFETY: we used Ordering::Acquire to lock the state and will use
-                // Ordering::Release to set `STATE_INITIALIZED`.
+                // Successfully acquired the lock
                 let context = unsafe { &mut *self.context.get() };
                 if context.is_none() {
                     *context = Some(RustFutureContext {
@@ -303,23 +300,74 @@ where
                     log::error!("context already set in startup()")
                 }
             }
+            Err(state) if (state | Self::STATE_CANCELLED) != 0 => {
+                // task cancelled before it was started
+                T::invoke_future_callback(
+                    callback,
+                    callback_data,
+                    T::ReturnType::ffi_default(),
+                    RustCallStatus::cancelled(),
+                );
+            }
             Err(state) => {
                 log::error!("Unexpected state in startup(): {state:b}");
             }
         }
     }
 
+    /// Cancel a future
+    ///
+    /// This causes the future to immediately invoke the callback with a
+    /// [RustCallStatusCode::Cancelled] error code
+    fn cancel(self: Arc<Self>) {
+        // Try to acquire the lock.  Ensure that the STATE_CANCELLED bit is set regardless.
+        let prev_state = self.state.fetch_or(
+            Self::STATE_LOCKED | Self::STATE_CANCELLED,
+            Ordering::Acquire,
+        );
+        if prev_state & Self::STATE_INITIALIZED == 0 {
+            // task hasn't started yet, release the lock and cancel once startup() is called
+            self.state.fetch_and(!Self::STATE_LOCKED, Ordering::Relaxed);
+        } else if (prev_state & Self::STATE_LOCKED) == 0 {
+            self.complete_after_cancel();
+        }
+    }
+
+    // Complete the future after cancellation.
+    //
+    // The lock must have been acquired before calling this function
+    fn complete_after_cancel(&self) {
+        // We can take a reference to context the lock must be acquired before calling the function
+        match unsafe { &*self.context.get() } {
+            Some(context) => {
+                // Call the callback.  Keep STATE_LOCKED set since we don't want to continue
+                // polling the future.
+                T::invoke_future_callback(
+                    context.callback,
+                    context.callback_data,
+                    T::ReturnType::ffi_default(),
+                    RustCallStatus::cancelled(),
+                )
+            }
+            None => log::error!("context not set in complete_after_cancel()"),
+        };
+    }
+
+
     /// Wake up soon and poll our future.
     fn wake(self: Arc<Self>) {
-        // Try to lock the state.  Ensure that the STATE_WAKE_CALLED bit is set regardless.
+        // Try to acquire the lock.  Ensure that the STATE_WAKE_CALLED bit is set regardless.
         let prev_state = self.state.fetch_or(
             Self::STATE_LOCKED | Self::STATE_WAKE_CALLED,
             Ordering::Acquire,
         );
         if prev_state & Self::STATE_INITIALIZED == 0 {
             log::error!("Uninitialized state in wake(): {prev_state:b}");
+        } else if prev_state & (Self::STATE_LOCKED | Self::STATE_CANCELLED) == Self::STATE_CANCELLED {
+            // Successfully acquired the lock, but the future was already cancelled
+            self.complete_after_cancel();
         } else if (prev_state & Self::STATE_LOCKED) == 0 {
-            // SAFETY: we used Ordering::Acquire to lock the state
+            // Successfully acquired the lock
             let context = unsafe { &*self.context.get() };
             match context {
                 Some(context) => self.schedule_do_wake(context.executor.handle),
@@ -334,6 +382,11 @@ where
         let prev_state = self
             .state
             .fetch_and(!Self::STATE_WAKE_CALLED, Ordering::Acquire);
+
+        if prev_state & Self::STATE_INITIALIZED == 0 {
+            log::error!("Uninitialized state in start_do_wake(): {prev_state:b}");
+        }
+
         if prev_state & (Self::STATE_INITIALIZED | Self::STATE_LOCKED)
             == Self::STATE_INITIALIZED | Self::STATE_LOCKED
         {
@@ -384,13 +437,15 @@ where
     fn complete_after_do_wake(self: Arc<Self>, result: T::ReturnType, out_status: RustCallStatus) {
         // We can take a reference to context because we never unlocked the state
         match unsafe { &*self.context.get() } {
-            // Call the callback keep the STATE_LOCKED set since we must not poll future again
-            Some(context) => T::invoke_future_callback(
-                context.callback,
-                context.callback_data,
-                result,
-                out_status,
-            ),
+            Some(context) => {
+                // Call the callback.  Keep STATE_LOCKED set since we must not poll future again
+                T::invoke_future_callback(
+                    context.callback,
+                    context.callback_data,
+                    result,
+                    out_status,
+                );
+            }
             None => log::error!("context not set in complete_after_do_wake()"),
         }
     }
@@ -579,7 +634,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{try_lift_from_rust_buffer, MockEventLoop};
+    use crate::{try_lift_from_rust_buffer, MockEventLoop, RustCallStatusCode};
     use std::sync::Weak;
 
     // Mock future that we can manually control using an Option<>
@@ -685,7 +740,7 @@ mod tests {
             .take()
             .expect("Expected result to be set");
         assert_eq!(result.value, 1);
-        assert_eq!(result.status.code, 0);
+        assert_eq!(result.status.code, RustCallStatusCode::Success);
         assert_eq!(eventloop.call_count(), 0);
 
         // Future wakes shouldn't schedule any calls
@@ -704,7 +759,7 @@ mod tests {
             .foreign_result
             .take()
             .expect("Expected result to be set");
-        assert_eq!(result.status.code, 1);
+        assert_eq!(result.status.code, RustCallStatusCode::Error);
         unsafe {
             assert_eq!(
                 try_lift_from_rust_buffer::<String, crate::UniFfiTag>(
