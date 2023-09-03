@@ -48,7 +48,7 @@
 //! pub extern "C" fn _uniffi_hello(
 //!     // ...If the function inputted arguments, the lowered versions would go here
 //!     uniffi_executor: ForeignExecutor,
-//!     uniffi_callback: <bool as FfiConverter<crate::UniFFITag>>::FutureCallback,
+//!     uniffi_callback: FutureCallback<<bool as FfiConverter<crate::UniFFITag>>::FutureCallbackT>,
 //!     uniffi_callback_data: *const (),
 //!     uniffi_call_status: &mut ::uniffi::RustCallStatus
 //! ) {
@@ -154,7 +154,7 @@ where
     future: UnsafeCell<F>,
     executor: ForeignExecutor,
     wake_counter: AtomicU32,
-    callback: T::FutureCallback,
+    callback: FutureCallback<T::FutureCallbackT>,
     callback_data: *const (),
 }
 
@@ -184,7 +184,7 @@ where
     pub fn new(
         future: F,
         executor_handle: ForeignExecutorHandle,
-        callback: T::FutureCallback,
+        callback: FutureCallback<T::FutureCallbackT>,
         callback_data: *const (),
     ) -> Pin<Arc<Self>> {
         let executor =

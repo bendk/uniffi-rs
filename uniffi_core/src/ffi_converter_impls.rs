@@ -120,9 +120,9 @@ unsafe impl<UT> FfiConverter<UT> for () {
     type FfiType = ();
     // Returning `()` is FFI-safe, since it gets translated into a void return
     type ReturnType = ();
-    // However, we can't use `FutureCallback<()>` since passing `()` as an argument is not
+    // However, we can't have `FutureCallbackT = ()` since passing `()` as an argument is not
     // FFI-safe.  So we used an arbitrary non-ZST type instead.
-    type FutureCallback = FutureCallback<u8>;
+    type FutureCallbackT = u8;
 
     fn try_lift(_: Self::FfiType) -> Result<()> {
         Ok(())
@@ -141,7 +141,7 @@ unsafe impl<UT> FfiConverter<UT> for () {
     }
 
     fn invoke_future_callback(
-        callback: Self::FutureCallback,
+        callback: FutureCallback<u8>,
         callback_data: *const (),
         _return_value: (),
         call_status: RustCallStatus,
@@ -481,7 +481,7 @@ where
 {
     type FfiType = (); // Placeholder while lower/lift/serializing is unimplemented
     type ReturnType = R::ReturnType;
-    type FutureCallback = R::FutureCallback;
+    type FutureCallbackT = R::FutureCallbackT;
 
     fn try_lift(_: Self::FfiType) -> Result<Self> {
         unimplemented!("try_lift");
@@ -521,7 +521,7 @@ where
     }
 
     fn invoke_future_callback(
-        callback: Self::FutureCallback,
+        callback: FutureCallback<Self::FutureCallbackT>,
         callback_data: *const (),
         return_value: Self::ReturnType,
         call_status: RustCallStatus,

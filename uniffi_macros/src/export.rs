@@ -181,7 +181,7 @@ pub(crate) fn ffi_converter_trait_impl(trait_ident: &Ident, tag: Option<&Path>) 
         unsafe #impl_spec {
             type FfiType = *const ::std::os::raw::c_void;
             type ReturnType = Self::FfiType;
-            type FutureCallback = ::uniffi::FutureCallback<Self::ReturnType>;
+            type FutureCallbackT = Self::ReturnType;
 
             fn lower(obj: ::std::sync::Arc<Self>) -> Self::FfiType {
                 ::std::boxed::Box::into_raw(::std::boxed::Box::new(obj)) as *const ::std::os::raw::c_void
@@ -213,7 +213,7 @@ pub(crate) fn ffi_converter_trait_impl(trait_ident: &Ident, tag: Option<&Path>) 
             }
 
             fn invoke_future_callback(
-                callback: Self::FutureCallback,
+                callback: ::uniffi::FutureCallback<Self::FutureCallbackT>,
                 callback_data: *const (),
                 return_value: Self::ReturnType,
                 call_status: ::uniffi::RustCallStatus,

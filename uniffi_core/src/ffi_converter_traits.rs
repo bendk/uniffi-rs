@@ -5,8 +5,8 @@
 use std::sync::Arc;
 
 use crate::{
-    try_lift_from_rust_buffer, FfiDefault, MetadataBuffer, Result, RustBuffer, RustCallStatus,
-    UnexpectedUniFFICallbackError,
+    try_lift_from_rust_buffer, FfiDefault, FutureCallback, MetadataBuffer, Result, RustBuffer,
+    RustCallStatus, UnexpectedUniFFICallbackError,
 };
 
 /// Trait defining how to transfer values via the FFI layer.
@@ -67,11 +67,11 @@ pub unsafe trait FfiConverter<UT>: Sized {
     /// This is usually the same as `FfiType`, but `Result<>` has specialized handling.
     type ReturnType: FfiDefault;
 
-    /// The `FutureCallback<T>` type used for async functions
+    /// The `T` type used in the `FutureCallback<T>` type used for async functions
     ///
-    /// This is almost always `FutureCallback<Self::ReturnType>`.  The one exception is the
-    /// unit type, see that `FfiConverter` impl for details.
-    type FutureCallback: Copy;
+    /// This is almost always `Self::ReturnType`.  The one exception is the unit type, see that
+    /// `FfiConverter` impl for details.
+    type FutureCallbackT;
 
     /// Lower a rust value of the target type, into an FFI value of type Self::FfiType.
     ///
@@ -153,7 +153,7 @@ pub unsafe trait FfiConverter<UT>: Sized {
 
     /// Invoke a `FutureCallback` to complete a async call
     fn invoke_future_callback(
-        callback: Self::FutureCallback,
+        callback: FutureCallback<Self::FutureCallbackT>,
         callback_data: *const (),
         return_value: Self::ReturnType,
         call_status: RustCallStatus,
@@ -177,7 +177,7 @@ pub unsafe trait FfiConverter<UT>: Sized {
 pub unsafe trait FfiConverterArc<UT> {
     type FfiType;
     type ReturnType: FfiDefault;
-    type FutureCallback: Copy;
+    type FutureCallbackT;
 
     fn lower(obj: Arc<Self>) -> Self::FfiType;
     fn lower_return(obj: Arc<Self>) -> Result<Self::ReturnType, RustBuffer>;
@@ -194,7 +194,7 @@ pub unsafe trait FfiConverterArc<UT> {
     fn write(obj: Arc<Self>, buf: &mut Vec<u8>);
     fn try_read(buf: &mut &[u8]) -> Result<Arc<Self>>;
     fn invoke_future_callback(
-        callback: Self::FutureCallback,
+        callback: FutureCallback<Self::FutureCallbackT>,
         callback_data: *const (),
         return_value: Self::ReturnType,
         call_status: RustCallStatus,
@@ -208,7 +208,7 @@ where
 {
     type FfiType = T::FfiType;
     type ReturnType = T::ReturnType;
-    type FutureCallback = T::FutureCallback;
+    type FutureCallbackT = T::FutureCallbackT;
 
     fn lower(obj: Self) -> Self::FfiType {
         T::lower(obj)
@@ -243,7 +243,7 @@ where
     }
 
     fn invoke_future_callback(
-        callback: Self::FutureCallback,
+        callback: FutureCallback<Self::FutureCallbackT>,
         callback_data: *const (),
         return_value: Self::ReturnType,
         call_status: RustCallStatus,

@@ -184,14 +184,14 @@ pub fn try_lift_from_rust_buffer<T: FfiConverter<UT>, UT>(v: RustBuffer) -> Resu
 macro_rules! ffi_converter_default_return {
     ($uniffi_tag:ty) => {
         type ReturnType = <Self as $crate::FfiConverter<$uniffi_tag>>::FfiType;
-        type FutureCallback = $crate::FutureCallback<Self::ReturnType>;
+        type FutureCallbackT = Self::ReturnType;
 
         fn lower_return(v: Self) -> ::std::result::Result<Self::FfiType, $crate::RustBuffer> {
             Ok(<Self as $crate::FfiConverter<$uniffi_tag>>::lower(v))
         }
 
         fn invoke_future_callback(
-            callback: Self::FutureCallback,
+            callback: $crate::FutureCallback<Self::FutureCallbackT>,
             callback_data: *const (),
             return_value: Self::ReturnType,
             call_status: $crate::RustCallStatus,
@@ -264,7 +264,7 @@ macro_rules! do_ffi_converter_forward {
         unsafe impl $crate::$trait<$new_impl_tag> for $T {
             type FfiType = <$T as $crate::$trait<$existing_impl_tag>>::FfiType;
             type ReturnType = <$T as $crate::$trait<$existing_impl_tag>>::FfiType;
-            type FutureCallback = <$T as $crate::$trait<$existing_impl_tag>>::FutureCallback;
+            type FutureCallbackT = <$T as $crate::$trait<$existing_impl_tag>>::FutureCallbackT;
 
             fn lower(obj: $rust_type) -> Self::FfiType {
                 <$T as $crate::$trait<$existing_impl_tag>>::lower(obj)
@@ -289,7 +289,7 @@ macro_rules! do_ffi_converter_forward {
             }
 
             fn invoke_future_callback(
-                callback: Self::FutureCallback,
+                callback: $crate::FutureCallback<Self::FutureCallbackT>,
                 callback_data: *const (),
                 return_value: Self::ReturnType,
                 call_status: $crate::RustCallStatus,

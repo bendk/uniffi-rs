@@ -191,7 +191,7 @@ fn gen_ffi_function(
             pub extern "C" fn #ffi_ident(
                 #(#params,)*
                 uniffi_executor_handle: ::uniffi::ForeignExecutorHandle,
-                uniffi_callback: <#return_ty as ::uniffi::FfiConverter<crate::UniFfiTag>>::FutureCallback,
+                uniffi_callback: ::uniffi::FutureCallback<<#return_ty as ::uniffi::FfiConverter<crate::UniFfiTag>>::FutureCallbackT>,
                 uniffi_callback_data: *const (),
                 uniffi_call_status: &mut ::uniffi::RustCallStatus,
             ) {

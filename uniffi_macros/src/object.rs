@@ -68,7 +68,7 @@ pub(crate) fn interface_impl(ident: &Ident, tag: Option<&Path>) -> TokenStream {
             // Don't use a pointer to <T> as that requires a `pub <T>`
             type FfiType = *const ::std::os::raw::c_void;
             type ReturnType = *const ::std::os::raw::c_void;
-            type FutureCallback = ::uniffi::FutureCallback<Self::ReturnType>;
+            type FutureCallbackT = Self::ReturnType;
 
             /// When lowering, we have an owned `Arc` and we transfer that ownership
             /// to the foreign-language code, "leaking" it out of Rust's ownership system
@@ -125,7 +125,7 @@ pub(crate) fn interface_impl(ident: &Ident, tag: Option<&Path>) -> TokenStream {
             }
 
             fn invoke_future_callback(
-                callback: Self::FutureCallback,
+                callback: ::uniffi::FutureCallback<Self::FutureCallbackT>,
                 callback_data: *const (),
                 return_value: Self::ReturnType,
                 call_status: ::uniffi::RustCallStatus,
