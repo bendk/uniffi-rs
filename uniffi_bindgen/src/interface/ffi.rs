@@ -196,53 +196,6 @@ impl FfiFunction {
             self.return_type = return_type;
         }
     }
-
-    pub fn new_rust_future_startup(name: String, return_type: Option<FfiType>) -> Self {
-        Self {
-            name,
-            is_async: false,
-            arguments: vec![
-                FfiArgument {
-                    name: "handle".into(),
-                    type_: FfiType::RustFutureHandle,
-                },
-                // Used to schedule polls
-                FfiArgument {
-                    name: "uniffi_executor".into(),
-                    type_: FfiType::ForeignExecutorHandle,
-                },
-                // Invoked when the future is ready
-                FfiArgument {
-                    name: "uniffi_callback".into(),
-                    type_: FfiType::FutureCallback {
-                        return_type: Box::new(return_type.unwrap_or(FfiType::UInt8)),
-                    },
-                },
-                // Data pointer passed to the callback
-                FfiArgument {
-                    name: "uniffi_callback_data".into(),
-                    type_: FfiType::FutureCallbackData,
-                },
-            ],
-            return_type: None,
-            has_rust_call_status_arg: false,
-            ..FfiFunction::default()
-        }
-    }
-
-    pub fn new_rust_future_free(name: String) -> Self {
-        Self {
-            name,
-            is_async: false,
-            arguments: vec![FfiArgument {
-                name: "handle".into(),
-                type_: FfiType::RustFutureHandle,
-            }],
-            return_type: None,
-            has_rust_call_status_arg: false,
-            ..FfiFunction::default()
-        }
-    }
 }
 
 impl Default for FfiFunction {
