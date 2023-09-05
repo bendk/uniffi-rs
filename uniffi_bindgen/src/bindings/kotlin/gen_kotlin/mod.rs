@@ -300,10 +300,7 @@ impl KotlinCodeOracle {
             FfiType::ForeignCallback => "ForeignCallback".to_string(),
             FfiType::ForeignExecutorHandle => "USize".to_string(),
             FfiType::ForeignExecutorCallback => "UniFfiForeignExecutorCallback".to_string(),
-            FfiType::FutureCallback { return_type } => {
-                format!("UniFfiFutureCallback{}", Self::ffi_type_label(return_type))
-            }
-            FfiType::FutureCallbackData | FfiType::RustFutureHandle => "USize".to_string(),
+            FfiType::FutureCallbackHandle | FfiType::FutureCallbackData | FfiType::RustFutureHandle => "USize".to_string(),
         }
     }
 }

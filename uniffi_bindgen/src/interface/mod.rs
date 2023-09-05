@@ -413,6 +413,72 @@ impl ComponentInterface {
         }
     }
 
+    /// Builtin FFI function for starting up Rust Future
+    pub fn ffi_rust_future_startup(&self) -> FfiFunction {
+        FfiFunction {
+            name: format!("ffi_{}_rust_future_startup", self.ffi_namespace()),
+            is_async: false,
+            arguments: vec![
+                FfiArgument {
+                    name: "handle".to_string(),
+                    type_: FfiType::RustFutureHandle
+                },
+                // Used to schedule polls
+                FfiArgument {
+                    name: "uniffi_executor".into(),
+                    type_: FfiType::ForeignExecutorHandle,
+                },
+                // Invoked when the future is ready
+                FfiArgument {
+                    name: "uniffi_callback".into(),
+                    type_: FfiType::FutureCallbackHandle,
+                },
+                // Data pointer passed to the callback
+                FfiArgument {
+                    name: "uniffi_callback_data".into(),
+                    type_: FfiType::FutureCallbackData,
+                },
+            ],
+            return_type: None,
+            has_rust_call_status_arg: false,
+            is_object_free_function: false,
+        }
+    }
+
+    /// Builtin FFI function for cancelling a Rust Future
+    pub fn ffi_rust_future_cancel(&self) -> FfiFunction {
+        FfiFunction {
+            name: format!("ffi_{}_rust_future_cancel", self.ffi_namespace()),
+            is_async: false,
+            arguments: vec![
+                FfiArgument {
+                    name: "handle".to_string(),
+                    type_: FfiType::RustFutureHandle
+                },
+            ],
+            return_type: None,
+            has_rust_call_status_arg: false,
+            is_object_free_function: false,
+        }
+    }
+
+    /// Builtin FFI function for freeing a Rust Future
+    pub fn ffi_rust_future_free(&self) -> FfiFunction {
+        FfiFunction {
+            name: format!("ffi_{}_rust_future_free", self.ffi_namespace()),
+            is_async: false,
+            arguments: vec![
+                FfiArgument {
+                    name: "handle".to_string(),
+                    type_: FfiType::RustFutureHandle
+                },
+            ],
+            return_type: None,
+            has_rust_call_status_arg: false,
+            is_object_free_function: false,
+        }
+    }
+
     /// Does this interface contain async functions?
     pub fn has_async_fns(&self) -> bool {
         self.iter_ffi_function_definitions().any(|f| f.is_async())
@@ -444,6 +510,7 @@ impl ComponentInterface {
         self.iter_user_ffi_function_definitions()
             .cloned()
             .chain(self.iter_rust_buffer_ffi_function_definitions())
+            .chain(self.iter_futures_ffi_function_definitons())
             .chain(self.iter_checksum_ffi_functions())
             .chain(self.ffi_foreign_executor_callback_set())
             .chain([self.ffi_uniffi_contract_version()])
@@ -477,6 +544,16 @@ impl ComponentInterface {
             self.ffi_rustbuffer_from_bytes(),
             self.ffi_rustbuffer_free(),
             self.ffi_rustbuffer_reserve(),
+        ]
+        .into_iter()
+    }
+
+    /// List all FFI functions definitions for async functionality.
+    pub fn iter_futures_ffi_function_definitons(&self) -> impl Iterator<Item = FfiFunction> {
+        [
+            self.ffi_rust_future_startup(),
+            self.ffi_rust_future_cancel(),
+            self.ffi_rust_future_free(),
         ]
         .into_iter()
     }

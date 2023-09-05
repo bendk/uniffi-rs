@@ -311,12 +311,7 @@ impl PythonCodeOracle {
             // Pointer to an `asyncio.EventLoop` instance
             FfiType::ForeignExecutorHandle => "ctypes.c_size_t".to_string(),
             FfiType::ForeignExecutorCallback => "_UNIFFI_FOREIGN_EXECUTOR_CALLBACK_T".to_string(),
-            FfiType::FutureCallback { return_type } => {
-                format!(
-                    "_uniffi_future_callback_t({})",
-                    Self::ffi_type_label(return_type),
-                )
-            }
+            FfiType::FutureCallbackHandle => "ctypes.c_void_p".to_string(),
             FfiType::FutureCallbackData => "ctypes.c_size_t".to_string(),
             FfiType::RustFutureHandle => "ctypes.c_size_t".into(),
         }

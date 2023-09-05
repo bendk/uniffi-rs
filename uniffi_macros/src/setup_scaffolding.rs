@@ -91,26 +91,26 @@ pub fn setup_scaffolding(namespace: String) -> Result<TokenStream> {
         #[doc(hidden)]
         #[no_mangle]
         pub unsafe extern "C" fn #ffi_rust_future_startup(
-            handle: uniffi::RustFutureHandle
-            executor_handle: ForeignExecutorHandle,
-            callback: FutureCallbackHandle,
+            handle: ::uniffi::RustFutureHandle,
+            executor_handle: ::uniffi::ForeignExecutorHandle,
+            callback: ::uniffi::FutureCallbackHandle,
             callback_data: *const (),
         ) {
-            uniffi::ffi::rust_future_startup(handle, executor_handle, callback, callback_data)
+            ::uniffi::ffi::rust_future_startup(handle, executor_handle, callback, callback_data)
         }
 
         #[allow(clippy::missing_safety_doc, missing_docs)]
         #[doc(hidden)]
         #[no_mangle]
-        pub unsafe extern "C" fn #ffi_rust_future_cancel(handle: uniffi::RustFutureHandle) {
-            uniffi::ffi::rust_future_cancel(handle)
+        pub unsafe extern "C" fn #ffi_rust_future_cancel(handle: ::uniffi::RustFutureHandle) {
+            ::uniffi::ffi::rust_future_cancel(handle)
         }
 
         #[allow(clippy::missing_safety_doc, missing_docs)]
         #[doc(hidden)]
         #[no_mangle]
-        pub unsafe extern "C" fn #ffi_rust_future_free(handle: uniffi::RustFutureHandle) {
-            uniffi::ffi::rust_future_free(handle)
+        pub unsafe extern "C" fn #ffi_rust_future_free(handle: ::uniffi::RustFutureHandle) {
+            ::uniffi::ffi::rust_future_free(handle)
         }
 
         // Code to re-export the UniFFI scaffolding functions.

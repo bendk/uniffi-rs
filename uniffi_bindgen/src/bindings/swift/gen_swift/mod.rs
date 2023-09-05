@@ -463,11 +463,9 @@ impl SwiftCodeOracle {
             FfiType::ForeignCallback => "ForeignCallback".into(),
             FfiType::ForeignExecutorHandle => "Int".into(),
             FfiType::ForeignExecutorCallback => "ForeignExecutorCallback".into(),
-            FfiType::FutureCallback { return_type } => {
-                format!("UniFfiFutureCallback{}", self.ffi_type_label(return_type))
-            }
+            FfiType::FutureCallbackHandle => "UniFfiFutureCallback".into(),
             FfiType::FutureCallbackData | FfiType::RustFutureHandle => {
-                "UnsafeMutableRawPointer".into()
+                "UnsafeRawPointer".into()
             }
         }
     }
@@ -475,8 +473,7 @@ impl SwiftCodeOracle {
     fn ffi_type_label(&self, ffi_type: &FfiType) -> String {
         match ffi_type {
             FfiType::ForeignCallback
-            | FfiType::ForeignExecutorCallback
-            | FfiType::FutureCallback { .. } => {
+            | FfiType::ForeignExecutorCallback => {
                 format!("{} _Nonnull", self.ffi_type_label_raw(ffi_type))
             }
             _ => self.ffi_type_label_raw(ffi_type),
@@ -564,11 +561,8 @@ pub mod filters {
             FfiType::ForeignCallback => "ForeignCallback _Nonnull".into(),
             FfiType::ForeignExecutorCallback => "UniFfiForeignExecutorCallback _Nonnull".into(),
             FfiType::ForeignExecutorHandle => "size_t".into(),
-            FfiType::FutureCallback { return_type } => format!(
-                "UniFfiFutureCallback{} _Nonnull",
-                SwiftCodeOracle.ffi_type_label_raw(return_type)
-            ),
-            FfiType::FutureCallbackData | FfiType::RustFutureHandle => "void* _Nonnull".into(),
+            FfiType::FutureCallbackHandle => "UniFfiFutureCallback".into(),
+            FfiType::FutureCallbackData | FfiType::RustFutureHandle => "const void* _Nonnull".into(),
         })
     }
 

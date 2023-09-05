@@ -69,7 +69,7 @@ class {{ type_name }}(
                     val callback = {{ meth.result_type().borrow()|future_callback_handler }}(continuation)
                     uniffiActiveFutureCallbacks.add(callback)
                     continuation.invokeOnCancellation { uniffiActiveFutureCallbacks.remove(callback) }
-                    _UniFFILib.INSTANCE.{{ meth.rust_future_startup_func().name() }}(
+                    _UniFFILib.INSTANCE.{{ ci.ffi_rust_future_startup().name() }}(
                         rustFutureHandle,
                         FfiConverterForeignExecutor.lower(scope),
                         callback,
@@ -77,7 +77,7 @@ class {{ type_name }}(
                     )
                 }
             } finally {
-                _UniFFILib.INSTANCE.{{ meth.rust_future_free_func().name() }}(rustFutureHandle)
+                _UniFFILib.INSTANCE.{{ ci.ffi_rust_future_free().name() }}(rustFutureHandle)
             }
         }
     }

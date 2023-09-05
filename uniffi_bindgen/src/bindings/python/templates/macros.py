@@ -104,8 +104,6 @@ _rust_call(
         {%- call setup_args_extra_indent(meth) %}
         return await _rust_call_async(
             _UniffiLib.{{ meth.ffi_func().name() }},
-            _UniffiLib.{{ meth.rust_future_startup_func().name() }},
-            _UniffiLib.{{ meth.rust_future_free_func().name() }},
             {{ meth.result_type().borrow()|async_callback_fn }},
             self._pointer,
             {% call arg_list_lowered(meth) %}

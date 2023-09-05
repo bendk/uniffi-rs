@@ -44,14 +44,14 @@ def _rust_call_with_error(error_ffi_converter, fn, *args):
     _uniffi_check_call_status(error_ffi_converter, call_status)
     return result
 
-async def _rust_call_async(scaffolding_fn, startup_fn, free_fn, callback_fn, *args):
+async def _rust_call_async(scaffolding_fn, callback_fn, *args):
     # Call the scaffolding function, passing it a callback handler for `AsyncTypes.py` and a pointer
     # to a python Future object.  The async function then awaits the Future.
     uniffi_eventloop = asyncio.get_running_loop()
     uniffi_py_future = uniffi_eventloop.create_future()
     rust_future_handle = scaffolding_fn(*args)
     try:
-        startup_fn(
+        _UniffiLib.{{ ci.ffi_rust_future_startup().name() }}(
             rust_future_handle,
             # TODO: this and the next new_pointer() call could probably be simplified and replaced by
             # `ctypes.py_object()`.
@@ -61,7 +61,7 @@ async def _rust_call_async(scaffolding_fn, startup_fn, free_fn, callback_fn, *ar
         )
         return await uniffi_py_future
     finally:
-        free_fn(rust_future_handle)
+        _UniffiLib.{{ ci.ffi_rust_future_free().name() }}(rust_future_handle)
 
 def _uniffi_check_call_status(error_ffi_converter, call_status):
     if call_status.code == _UniffiRustCallStatus.CALL_SUCCESS:

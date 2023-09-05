@@ -55,11 +55,7 @@ pub enum FfiType {
     /// Pointer to the callback function that's invoked to schedule calls with a ForeignExecutor
     ForeignExecutorCallback,
     /// Pointer to a callback function to complete an async Rust function
-    FutureCallback {
-        /// Note: `return_type` is not optional because we have a void callback parameter like we
-        /// can have a void return.  Instead, we use `UInt8` as a placeholder value.
-        return_type: Box<FfiType>,
-    },
+    FutureCallbackHandle,
     /// Opaque pointer passed to the FutureCallback
     FutureCallbackData,
     /// Opaque pointer representing the Rust Future for an async function

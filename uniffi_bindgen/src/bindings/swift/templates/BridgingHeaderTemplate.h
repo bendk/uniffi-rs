@@ -55,14 +55,11 @@ typedef struct RustCallStatus {
     RustBuffer errorBuf;
 } RustCallStatus;
 
+typedef void (*UniFfiFutureCallback)();
+
 // ⚠️ Attention: If you change this #else block (ending in `#endif // def UNIFFI_SHARED_H`) you *must* ⚠️
 // ⚠️ increment the version suffix in all instances of UNIFFI_SHARED_HEADER_V4 in this file.           ⚠️
 #endif // def UNIFFI_SHARED_H
-
-// Callbacks for UniFFI Futures
-{%- for ffi_type in ci.iter_future_callback_params() %}
-typedef void (*UniFfiFutureCallback{{ ffi_type|ffi_canonical_name }})(const void * _Nonnull, {{ ffi_type|header_ffi_type_name }}, RustCallStatus);
-{%- endfor %}
 
 // Scaffolding functions
 {%- for func in ci.iter_ffi_function_definitions() %}

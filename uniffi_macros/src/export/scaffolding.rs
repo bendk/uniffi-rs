@@ -191,7 +191,7 @@ fn gen_ffi_function(
             pub extern "C" fn #ffi_ident(#(#params,)*) -> ::uniffi::RustFutureHandle {
                 ::uniffi::deps::log::debug!(#name);
                 #pre_fn_call;
-                ::uniffi::rust_future_new(#future_expr)
+                ::uniffi::rust_future_new::<_, _, crate::UniFfiTag>(#future_expr)
             }
         }
     })

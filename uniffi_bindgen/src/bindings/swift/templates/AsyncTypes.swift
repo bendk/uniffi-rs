@@ -26,4 +26,27 @@ fileprivate func {{ result_type|future_callback }}(
     }
 }
 
+let BOOOOO{{ result_type|future_callback }} = @convention(c) (
+    _ rawContinutation: UnsafeRawPointer,
+    _ returnValue: {{ result_type.future_callback_param().borrow()|ffi_type_name }},
+    _ callStatus: RustCallStatus) -> () = {
+
+    let continuation = rawContinutation.bindMemory(
+        to: {{ result_type|future_continuation_type }}.self,
+        capacity: 1
+    )
+
+    do {
+        try uniffiCheckCallStatus(callStatus: callStatus, errorHandler: {{ result_type|error_handler }})
+        {%- match result_type.return_type %}
+        {%- when Some(return_type) %}
+        continuation.pointee.resume(returning: try {{ return_type|lift_fn }}(returnValue))
+        {%- when None %}
+        continuation.pointee.resume(returning: ())
+        {%- endmatch %}
+    } catch let error {
+        continuation.pointee.resume(throwing: error)
+    }
+}
+
 {%- endfor %}

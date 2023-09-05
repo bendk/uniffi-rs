@@ -44,15 +44,12 @@ public class {{ type_name }}: {{ obj.name() }}Protocol {
     {%- if meth.is_async() %}
 
     public func {{ meth.name()|fn_name }}({%- call swift::arg_list_decl(meth) -%}) async {% call swift::throws(meth) %}{% match meth.return_type() %}{% when Some with (return_type) %} -> {{ return_type|type_name }}{% when None %}{% endmatch %} {
-        // Normally this is handled by rustCall(), but async functions don't go use that since they
-        // don't have a RustCallStatusArg
+        // call uniffiEnsureInitialized(). Normally this is handled by rustCall(), but async
+        // functions don't go use that since they don't have a RustCallStatusArg
         uniffiEnsureInitialized()
+
         // Suspend the function and call the scaffolding function, passing it a callback handler from
         // `AsyncTypes.swift`
-        //
-        // Make sure to hold on to a reference to the continuation in the top-level scope so that
-        // it's not freed before the callback is invoked.
-        var continuation: {{ meth.result_type().borrow()|future_continuation_type }}? = nil
         let rustFutureHandle = {{ meth.ffi_func().name() }}(
             self.pointer,
             {%- for arg in meth.arguments() %}
@@ -60,16 +57,22 @@ public class {{ type_name }}: {{ obj.name() }}Protocol {
             {%- endfor %}
         )
         defer {
-            {{ meth.rust_future_free_func().name() }}(rustFutureHandle)
+            {{ ci.ffi_rust_future_free().name() }}(rustFutureHandle)
         }
-        return {% call swift::try(meth) %} await withCheckedThrowingContinuation {
-            continuation = $0
-            {{ meth.rust_future_startup_func().name() }}(
-                rustFutureHandle,
-                FfiConverterForeignExecutor.lower(UniFfiForeignExecutor()),
-                {{ meth.result_type().borrow()|future_callback }},
-                &continuation
-            )
+        return {% if meth.throws() %}try {% endif %}await withTaskCancellationHandler {
+            return {% call swift::try(meth) %} await withCheckedThrowingContinuation {
+                // The simplest way to pass a pointer to Rust is via an in-out param, make
+                // continuation mutable so that we can do that
+                var continuation = $0
+                {{ ci.ffi_rust_future_startup().name() }}(
+                    rustFutureHandle,
+                    FfiConverterForeignExecutor.lower(UniFfiForeignExecutor()),
+                    {{ meth.result_type().borrow()|future_callback }} as UniFfiFutureCallback,
+                    &continuation
+                )
+            }
+        } onCancel: {
+            {{ ci.ffi_rust_future_cancel().name() }}(rustFutureHandle)
         }
     }
 
