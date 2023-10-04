@@ -498,6 +498,12 @@ unsafe impl<UT> LowerReturn<UT> for () {
 }
 
 unsafe impl<UT> LiftReturn<UT> for () {
+    type ReturnType = ();
+
+    fn try_lift_successful_return(_: ()) -> Result<Self> {
+        Ok(())
+    }
+
     fn lift_callback_return(_buf: RustBuffer) -> Self {}
 
     const TYPE_ID_META: MetadataBuffer = MetadataBuffer::from_code(metadata::codes::TYPE_UNIT);
@@ -535,13 +541,19 @@ where
 unsafe impl<UT, R, E> LiftReturn<UT> for Result<R, E>
 where
     R: LiftReturn<UT>,
-    E: Lift<UT> + From<UnexpectedUniFFICallbackError>,
+    E: Lift<UT, FfiType = RustBuffer> + From<UnexpectedUniFFICallbackError>,
 {
+    type ReturnType = R::ReturnType;
+
+    fn try_lift_successful_return(v: R::ReturnType) -> Result<Self> {
+        R::try_lift_successful_return(v).map(Ok)
+    }
+
     fn lift_callback_return(buf: RustBuffer) -> Self {
         Ok(R::lift_callback_return(buf))
     }
 
-    fn lift_callback_error(buf: RustBuffer) -> Self {
+    fn lift_error(buf: RustBuffer) -> Self {
         match E::try_lift_from_rust_buffer(buf) {
             Ok(lifted_error) => Err(lifted_error),
             Err(anyhow_error) => {

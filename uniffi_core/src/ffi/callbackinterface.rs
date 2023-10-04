@@ -186,7 +186,7 @@ impl ForeignCallbackInternals {
             .unwrap_or_else(|code| panic!("Callback failed with unexpected return code: {code}"));
         match result {
             CallbackResult::Success => R::lift_callback_return(ret_rbuf),
-            CallbackResult::Error => R::lift_callback_error(ret_rbuf),
+            CallbackResult::Error => R::lift_error(ret_rbuf),
             CallbackResult::UnexpectedError => {
                 let reason = if !ret_rbuf.is_empty() {
                     match <String as Lift<UniFfiTag>>::try_lift(ret_rbuf) {
@@ -216,8 +216,10 @@ pub struct UnexpectedUniFFICallbackError {
 }
 
 impl UnexpectedUniFFICallbackError {
-    pub fn from_reason(reason: String) -> Self {
-        Self { reason }
+    pub fn new(reason: impl fmt::Display) -> Self {
+        Self {
+            reason: reason.to_string(),
+        }
     }
 }
 
