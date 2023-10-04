@@ -10,8 +10,8 @@ mod attributes;
 mod callback_interface;
 mod item;
 mod scaffolding;
-mod utrait;
 mod trait_interface;
+mod utrait;
 
 use self::{
     item::{ExportItem, ImplItem},
@@ -98,7 +98,7 @@ pub(crate) fn expand_export(
                 .unwrap_or_else(|e| vec![e.into_compile_error()]);
 
             let init_ident = Ident::new(
-                &uniffi_meta::init_callback_fn_symbol_name(&mod_path, &trait_name),
+                &uniffi_meta::init_trait_callback_fn_symbol_name(&mod_path, &trait_name),
                 Span::call_site(),
             );
 

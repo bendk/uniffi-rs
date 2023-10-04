@@ -25,6 +25,12 @@ open class RustBuffer : Structure() {
         }
     }
 
+    internal fun setValue(other: RustBuffer) {
+        capacity = other.capacity
+        len = other.len
+        data = other.data
+    }
+
     @Suppress("TooGenericExceptionThrown")
     fun asByteBuffer() =
         this.data?.getByteBuffer(0, this.len.toLong())?.also {

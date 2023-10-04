@@ -2,22 +2,27 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::backend::{CodeType, Literal};
+use super::KotlinCodeOracle;
+use crate::{
+    backend::{CodeType, Literal},
+    interface::ObjectImpl,
+};
 
 #[derive(Debug)]
 pub struct ObjectCodeType {
     id: String,
+    imp: ObjectImpl,
 }
 
 impl ObjectCodeType {
-    pub fn new(id: String) -> Self {
-        Self { id }
+    pub fn new(id: String, imp: ObjectImpl) -> Self {
+        Self { id, imp }
     }
 }
 
 impl CodeType for ObjectCodeType {
     fn type_label(&self) -> String {
-        super::KotlinCodeOracle.class_name(&self.id)
+        KotlinCodeOracle.class_name(&self.id)
     }
 
     fn canonical_name(&self) -> String {
@@ -26,5 +31,15 @@ impl CodeType for ObjectCodeType {
 
     fn literal(&self, _literal: &Literal) -> String {
         unreachable!();
+    }
+
+    fn initialization_fn(&self) -> Option<String> {
+        match &self.imp {
+            ObjectImpl::Trait => Some(format!(
+                "{}.initialize",
+                KotlinCodeOracle.trait_vtable_obj(&self.id)
+            )),
+            ObjectImpl::Struct => None,
+        }
     }
 }

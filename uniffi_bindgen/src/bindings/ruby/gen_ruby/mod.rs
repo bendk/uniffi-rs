@@ -165,6 +165,9 @@ mod filters {
             | FfiType::RustFutureContinuationData => {
                 unimplemented!("Async functions are not implemented")
             }
+            // This is not actually implemented yet, use `:pointer` as a placeholder so that the
+            // coverall tests pass
+            FfiType::VTable(_name) => ":pointer".to_string(),
         })
     }
 

@@ -5,6 +5,7 @@
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::iter;
 
 use anyhow::{Context, Result};
 use askama::Template;
@@ -280,14 +281,51 @@ impl KotlinCodeOracle {
         }
     }
 
-    fn ffi_type_label_by_value(ffi_type: &FfiType) -> String {
-        match ffi_type {
-            FfiType::RustBuffer(_) => format!("{}.ByValue", Self::ffi_type_label(ffi_type)),
-            _ => Self::ffi_type_label(ffi_type),
+    // Name of the generated interface for an object.
+    //
+    // For structs this is derived from the type name.  For traits it's the typename itself.  The
+    // reason for the difference is the FfiConverter.  For structs, the FfiConverter can only lower
+    // the specific class, for traits it can lower any object that implements the interface.
+    pub fn interface_name(&self, type_name: &str, obj_impl: &ObjectImpl) -> String {
+        match obj_impl {
+            ObjectImpl::Struct => format!("{type_name}Interface"),
+            ObjectImpl::Trait => type_name.to_owned(),
         }
     }
 
-    fn ffi_type_label(ffi_type: &FfiType) -> String {
+    // Name of the generated class implements its interface by calling into Rust
+    pub fn rust_impl_class_name(&self, type_name: &str, obj_impl: &ObjectImpl) -> String {
+        match obj_impl {
+            ObjectImpl::Struct => type_name.to_owned(),
+            ObjectImpl::Trait => format!("UniffiImplRust{type_name}"),
+        }
+    }
+
+    fn ffi_type_label_by_value(&self, ffi_type: &FfiType) -> String {
+        match ffi_type {
+            FfiType::RustBuffer(_) => format!("{}.ByValue", self.ffi_type_label(ffi_type)),
+            _ => self.ffi_type_label(ffi_type),
+        }
+    }
+
+    fn ffi_type_label_by_reference(&self, ffi_type: &FfiType) -> String {
+        match ffi_type {
+            FfiType::Int8
+            | FfiType::UInt8
+            | FfiType::Int16
+            | FfiType::UInt16
+            | FfiType::Int32
+            | FfiType::UInt32
+            | FfiType::Int64
+            | FfiType::UInt64
+            | FfiType::Float32
+            | FfiType::Float64 => format!("{}ByReference", self.ffi_type_label(ffi_type)),
+            FfiType::RustArcPtr(_) | FfiType::RustBuffer(_) => self.ffi_type_label(ffi_type),
+            _ => panic!("ffi_type_label_by_reference not implemented for {ffi_type:?}"),
+        }
+    }
+
+    fn ffi_type_label(&self, ffi_type: &FfiType) -> String {
         match ffi_type {
             // Note that unsigned integers in Kotlin are currently experimental, but java.nio.ByteBuffer does not
             // support them yet. Thus, we use the signed variants to represent both signed and unsigned
@@ -311,7 +349,38 @@ impl KotlinCodeOracle {
                 "UniFffiRustFutureContinuationCallbackType".to_string()
             }
             FfiType::RustFutureContinuationData => "USize".to_string(),
+            FfiType::VTable(name) => self.trait_vtable_class(name),
         }
+    }
+
+    /// FFI arguments for a single method in a trait vtable.
+    pub fn trait_vtable_method_args(&self, method: &Method) -> String {
+        iter::once("handle: USize".to_owned())
+            .chain(method.arguments().into_iter().map(|arg| {
+                format!(
+                    "{}: {}",
+                    self.var_name(arg.name()),
+                    self.ffi_type_label_by_value(&arg.as_type().into())
+                )
+            }))
+            .chain(iter::once(match method.return_type() {
+                Some(return_type) => format!(
+                    "uniffiOutReturn: {}",
+                    self.ffi_type_label_by_reference(&return_type.as_type().into())
+                ),
+                None => r#"@Suppress("UNUSED_PARAMETER")uniffiOutReturn: Pointer"#.to_owned(),
+            }))
+            .chain(iter::once("uniffiOutCallStatus: RustCallStatus".to_owned()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    pub fn trait_vtable_class(&self, name: &str) -> String {
+        format!("UniFffiTraitVTable{name}")
+    }
+
+    pub fn trait_vtable_obj(&self, name: &str) -> String {
+        format!("uniFffiTraitVTable{name}")
     }
 }
 
@@ -347,7 +416,7 @@ impl<T: AsType> AsCodeType for T {
             Type::Duration => Box::new(miscellany::DurationCodeType),
 
             Type::Enum { name, .. } => Box::new(enum_::EnumCodeType::new(name)),
-            Type::Object { name, .. } => Box::new(object::ObjectCodeType::new(name)),
+            Type::Object { name, imp, .. } => Box::new(object::ObjectCodeType::new(name, imp)),
             Type::Record { name, .. } => Box::new(record::RecordCodeType::new(name)),
             Type::CallbackInterface { name, .. } => {
                 Box::new(callback_interface::CallbackInterfaceCodeType::new(name))
@@ -452,23 +521,31 @@ pub mod filters {
         Ok(as_ct.as_codetype().literal(literal))
     }
 
+    pub fn ffi_type(as_type: impl AsType) -> Result<FfiType, askama::Error> {
+        Ok(as_type.as_type().into())
+    }
+
     /// Get the Kotlin syntax for representing a given low-level `FfiType`.
     pub fn ffi_type_name(type_: &FfiType) -> Result<String, askama::Error> {
-        Ok(KotlinCodeOracle::ffi_type_label(type_))
+        Ok(KotlinCodeOracle.ffi_type_label(type_))
     }
 
     pub fn ffi_type_name_by_value(type_: &FfiType) -> Result<String, askama::Error> {
-        Ok(KotlinCodeOracle::ffi_type_label_by_value(type_))
+        Ok(KotlinCodeOracle.ffi_type_label_by_value(type_))
     }
 
-    // Some FfiTypes have the same ffi_type_label - this makes a vec of them unique.
+    pub fn ffi_type_name_by_reference(type_: &FfiType) -> Result<String, askama::Error> {
+        Ok(KotlinCodeOracle.ffi_type_label_by_reference(type_))
+    }
+
+    // Some FfiTypes have the same ffi_type_name - this makes a vec of them unique.
     pub fn unique_ffi_types(
         types: impl Iterator<Item = FfiType>,
     ) -> Result<impl Iterator<Item = FfiType>, askama::Error> {
         let mut seen = HashSet::new();
         let mut result = Vec::new();
         for t in types {
-            if seen.insert(KotlinCodeOracle::ffi_type_label(&t)) {
+            if seen.insert(KotlinCodeOracle.ffi_type_label(&t)) {
                 result.push(t)
             }
         }
@@ -478,6 +555,11 @@ pub mod filters {
     /// Get the idiomatic Kotlin rendering of a function name.
     pub fn fn_name(nm: &str) -> Result<String, askama::Error> {
         Ok(KotlinCodeOracle.fn_name(nm))
+    }
+
+    /// Get the idiomatic Kotlin rendering of a variable name.
+    pub fn class_name(nm: &str) -> Result<String, askama::Error> {
+        Ok(KotlinCodeOracle.class_name(nm))
     }
 
     /// Get the idiomatic Kotlin rendering of a variable name.
@@ -527,5 +609,28 @@ pub mod filters {
     /// display the name for the user.
     pub fn unquote(nm: &str) -> Result<String, askama::Error> {
         Ok(nm.trim_matches('`').to_string())
+    }
+
+    pub fn interface_name(name: &str, obj_impl: &ObjectImpl) -> Result<String, askama::Error> {
+        Ok(KotlinCodeOracle.interface_name(name, obj_impl))
+    }
+
+    pub fn rust_impl_class_name(
+        name: &str,
+        obj_impl: &ObjectImpl,
+    ) -> Result<String, askama::Error> {
+        Ok(KotlinCodeOracle.rust_impl_class_name(name, obj_impl))
+    }
+
+    pub fn trait_vtable_class(name: &str) -> Result<String, askama::Error> {
+        Ok(KotlinCodeOracle.trait_vtable_class(name))
+    }
+
+    pub fn trait_vtable_obj(name: &str) -> Result<String, askama::Error> {
+        Ok(KotlinCodeOracle.trait_vtable_obj(name))
+    }
+
+    pub fn trait_vtable_method_args(method: &Method) -> Result<String, askama::Error> {
+        Ok(KotlinCodeOracle.trait_vtable_method_args(method))
     }
 }

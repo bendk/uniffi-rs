@@ -312,7 +312,26 @@ impl PythonCodeOracle {
             FfiType::RustFutureHandle => "ctypes.c_void_p".to_string(),
             FfiType::RustFutureContinuationCallback => "_UNIFFI_FUTURE_CONTINUATION_T".to_string(),
             FfiType::RustFutureContinuationData => "ctypes.c_size_t".to_string(),
+            // VTables are passed as a pointer to the struct.  Use a c_void_p since we want this to
+            // work before the struct is defined.
+            FfiType::VTable(_) => format!("ctypes.c_void_p"),
         }
+    }
+
+    pub fn ctypes_ffi_prototype(&self, ffi_func: &FfiFunction) -> String {
+        format!(
+            "ctypes.CFUNCTYPE(None, {}, {}, ctypes.POINTER(_UniffiRustCallStatus))",
+            ffi_func
+                .arguments()
+                .into_iter()
+                .map(|a| PythonCodeOracle::ffi_type_label(&a.type_()))
+                .collect::<Vec<_>>()
+                .join(", "),
+            match &ffi_func.return_type() {
+                Some(v) => format!("ctypes.POINTER({})", PythonCodeOracle::ffi_type_label(v)),
+                None => "ctypes.c_void_p".to_owned(),
+            },
+        )
     }
 }
 
@@ -408,6 +427,10 @@ pub mod filters {
 
     pub fn ffi_type(type_: &Type) -> Result<FfiType, askama::Error> {
         Ok(type_.into())
+    }
+
+    pub fn ctypes_ffi_prototype(ffi_func: &FfiFunction) -> Result<String, askama::Error> {
+        Ok(PythonCodeOracle.ctypes_ffi_prototype(ffi_func))
     }
 
     /// Get the Python syntax for representing a given low-level `FfiType`.

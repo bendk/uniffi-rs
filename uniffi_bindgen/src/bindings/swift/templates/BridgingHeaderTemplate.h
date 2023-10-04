@@ -62,18 +62,20 @@ typedef struct RustCallStatus {
 // Continuation callback for UniFFI Futures
 typedef void (*UniFfiRustFutureContinuation)(void * _Nonnull, int8_t);
 
+// Vtables for interface types
+{%- for obj in ci.object_definitions() %}
+{%- if obj.is_trait_interface() %}
+typedef struct {{ obj.name()|vtable_name }} {
+    {%- for meth in obj.methods() %}
+    {{ meth.ffi_func()|header_prototype_trait_method(meth.name()) }};
+    {%- endfor %}
+    void (*_Nonnull uniffiFree)(void * _Nonnull);
+} {{ obj.name()|vtable_name }};
+{%- endif %}
+{%- endfor %}
 // Scaffolding functions
 {%- for func in ci.iter_ffi_function_definitions() %}
-{% match func.return_type() -%}{%- when Some with (type_) %}{{ type_|header_ffi_type_name }}{% when None %}void{% endmatch %} {{ func.name() }}(
-    {%- if func.arguments().len() > 0 %}
-        {%- for arg in func.arguments() %}
-            {{- arg.type_().borrow()|header_ffi_type_name }} {{ arg.name() -}}{% if !loop.last || func.has_rust_call_status_arg() %}, {% endif %}
-        {%- endfor %}
-        {%- if func.has_rust_call_status_arg() %}RustCallStatus *_Nonnull out_status{% endif %}
-    {%- else %}
-        {%- if func.has_rust_call_status_arg() %}RustCallStatus *_Nonnull out_status{%- else %}void{% endif %}
-    {% endif %}
-);
+{{ func|header_prototype }};
 {%- endfor %}
 
 {% import "macros.swift" as swift %}

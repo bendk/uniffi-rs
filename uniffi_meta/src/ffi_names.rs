@@ -39,10 +39,10 @@ pub fn free_fn_symbol_name(namespace: &str, object_name: &str) -> String {
     format!("uniffi_{namespace}_fn_free_{object_name}")
 }
 
-/// FFI symbol name for the `init_callback` function for a callback interface
-pub fn init_callback_fn_symbol_name(namespace: &str, callback_interface_name: &str) -> String {
-    let callback_interface_name = callback_interface_name.to_ascii_lowercase();
-    format!("uniffi_{namespace}_fn_init_callback_{callback_interface_name}")
+/// FFI symbol name for the `init_callback` function for a trait/callback interface
+pub fn init_trait_callback_fn_symbol_name(namespace: &str, interface_name: &str) -> String {
+    let interface_name = interface_name.to_ascii_lowercase();
+    format!("uniffi_{namespace}_fn_init_trait_callback_{interface_name}")
 }
 
 /// FFI checksum symbol name for a top-level function

@@ -325,6 +325,19 @@ impl ObjectMetadata {
     pub fn free_ffi_symbol_name(&self) -> String {
         free_fn_symbol_name(&self.module_path, &self.name)
     }
+
+    /// FFI symbol name for the `init_trait_callback` function for this object, if there is one.
+    ///
+    /// This function is initialize the foreign side of a trait interface
+    pub fn init_trait_callback_ffi_symbol_name(&self) -> Option<String> {
+        match &self.imp {
+            types::ObjectImpl::Trait => Some(init_trait_callback_fn_symbol_name(
+                &self.module_path,
+                &self.name,
+            )),
+            _ => None,
+        }
+    }
 }
 
 /// The list of traits we support generating helper methods for.

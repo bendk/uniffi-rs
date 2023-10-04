@@ -20,6 +20,12 @@ pub enum CoverallError {
     TooManyHoles,
 }
 
+impl From<uniffi::UnexpectedUniFFICallbackError> for CoverallError {
+    fn from(_e: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        panic!("Saw UnexpectedUniFFICallbackError when a CoverallError was expected")
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CoverallFlatError {
     #[error("Too many variants: {num}")]
@@ -88,6 +94,12 @@ pub enum ComplexError {
     PermissionDenied { reason: String },
     #[error("Unknown error")]
     UnknownError,
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for ComplexError {
+    fn from(_e: uniffi::UnexpectedUniFFICallbackError) -> Self {
+        Self::UnknownError
+    }
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]

@@ -404,7 +404,7 @@ impl SwiftCodeOracle {
             Type::Duration => Box::new(miscellany::DurationCodeType),
 
             Type::Enum { name, .. } => Box::new(enum_::EnumCodeType::new(name)),
-            Type::Object { name, .. } => Box::new(object::ObjectCodeType::new(name)),
+            Type::Object { name, imp, .. } => Box::new(object::ObjectCodeType::new(name, imp)),
             Type::Record { name, .. } => Box::new(record::RecordCodeType::new(name)),
             Type::CallbackInterface { name, .. } => {
                 Box::new(callback_interface::CallbackInterfaceCodeType::new(name))
@@ -449,6 +449,14 @@ impl SwiftCodeOracle {
         nm.to_string().to_lower_camel_case()
     }
 
+    fn vtable_name(&self, obj_name: &str) -> String {
+        format!("UniffiTraitVTable{obj_name}")
+    }
+
+    pub fn ffi_type(as_type: impl AsType) -> Result<FfiType, askama::Error> {
+        Ok(as_type.as_type().into())
+    }
+
     fn ffi_type_label_raw(&self, ffi_type: &FfiType) -> String {
         match ffi_type {
             FfiType::Int8 => "Int8".into(),
@@ -471,6 +479,7 @@ impl SwiftCodeOracle {
             FfiType::RustFutureHandle | FfiType::RustFutureContinuationData => {
                 "UnsafeMutableRawPointer".into()
             }
+            FfiType::VTable(name) => format!("UnsafePointer<{}>", self.vtable_name(name)),
         }
     }
 
@@ -480,11 +489,88 @@ impl SwiftCodeOracle {
             | FfiType::ForeignExecutorCallback
             | FfiType::RustFutureHandle
             | FfiType::RustFutureContinuationCallback
-            | FfiType::RustFutureContinuationData => {
+            | FfiType::RustFutureContinuationData
+            | FfiType::VTable(_) => {
                 format!("{} _Nonnull", self.ffi_type_label_raw(ffi_type))
             }
             _ => self.ffi_type_label_raw(ffi_type),
         }
+    }
+
+    /// Like `ffi_type_label`, but used in `BridgingHeaderTemplate.h` which uses a slightly different
+    /// names.
+    pub fn header_ffi_type_label(&self, ffi_type: &FfiType) -> String {
+        match ffi_type {
+            FfiType::Int8 => "int8_t".into(),
+            FfiType::UInt8 => "uint8_t".into(),
+            FfiType::Int16 => "int16_t".into(),
+            FfiType::UInt16 => "uint16_t".into(),
+            FfiType::Int32 => "int32_t".into(),
+            FfiType::UInt32 => "uint32_t".into(),
+            FfiType::Int64 => "int64_t".into(),
+            FfiType::UInt64 => "uint64_t".into(),
+            FfiType::Float32 => "float".into(),
+            FfiType::Float64 => "double".into(),
+            FfiType::RustArcPtr(_) => "void*_Nonnull".into(),
+            FfiType::RustBuffer(_) => "RustBuffer".into(),
+            FfiType::ForeignBytes => "ForeignBytes".into(),
+            FfiType::ForeignCallback => "ForeignCallback _Nonnull".into(),
+            FfiType::ForeignExecutorCallback => "UniFfiForeignExecutorCallback _Nonnull".into(),
+            FfiType::ForeignExecutorHandle => "size_t".into(),
+            FfiType::RustFutureContinuationCallback => {
+                "UniFfiRustFutureContinuation _Nonnull".into()
+            }
+            FfiType::RustFutureHandle | FfiType::RustFutureContinuationData => {
+                "void* _Nonnull".into()
+            }
+            FfiType::VTable(name) => format!("const {}* _Nonnull", self.vtable_name(name)),
+        }
+    }
+
+    /// FFI function prototype for a scaffolding method in `BridgingHeaderTemplate.h`
+    pub fn header_prototype(&self, func: &FfiFunction) -> String {
+        let name = func.name();
+        let return_type = match func.return_type() {
+            Some(v) => self.header_ffi_type_label(v),
+            None => "void".to_owned(),
+        };
+        let mut arg_list: Vec<String> = func
+            .arguments()
+            .into_iter()
+            .map(|a| format!("{} {}", self.header_ffi_type_label(&a.type_()), a.name()))
+            .collect();
+        if func.has_rust_call_status_arg() {
+            arg_list.push("RustCallStatus *_Nonnull out_status".to_owned());
+        }
+        let args = if arg_list.is_empty() {
+            "void".to_owned()
+        } else {
+            arg_list.join(", ")
+        };
+        format!("{return_type} {name}({args})")
+    }
+
+    /// FFI function prototype for a trait interface method in `BridgingHeaderTemplate.h`
+    pub fn header_prototype_trait_method(&self, func: &FfiFunction, name: &str) -> String {
+        let name = self.fn_name(name);
+        let mut arg_list: Vec<String> = func
+            .arguments()
+            .into_iter()
+            .map(|a| format!("{} {}", self.header_ffi_type_label(&a.type_()), a.name()))
+            .collect();
+        arg_list.push(match func.return_type() {
+            Some(v) => format!("{} *_Nonnull out_return", self.header_ffi_type_label(v)),
+            None => "void *_Nullable out_return".to_owned(),
+        });
+        if func.has_rust_call_status_arg() {
+            arg_list.push("RustCallStatus *_Nonnull out_status".to_owned());
+        }
+        let args = if arg_list.is_empty() {
+            "void".to_owned()
+        } else {
+            arg_list.join(", ")
+        };
+        format!("void (*_Nonnull {name})({args})")
     }
 
     fn ffi_canonical_name(&self, ffi_type: &FfiType) -> String {
@@ -510,6 +596,27 @@ pub mod filters {
 
     pub fn ffi_converter_name(as_type: &impl AsType) -> Result<String, askama::Error> {
         Ok(oracle().find(&as_type.as_type()).ffi_converter_name())
+    }
+
+    // For an object, get the name of:
+    //   - The protocol to define
+    //   - The generated class that implements that protocol by calling into Rust
+    pub fn object_type_names(
+        type_name: &str,
+        obj_impl: &ObjectImpl,
+    ) -> Result<(String, String), askama::Error> {
+        Ok(match obj_impl {
+            // For struct-based objects, the type is the generated class and the protocol name is
+            // derived from that
+            ObjectImpl::Struct => (format!("{type_name}Protocol"), type_name.to_owned()),
+            // For trait interfaces, the type is the protocol the generated class name is derived from
+            // that.
+            ObjectImpl::Trait => (type_name.to_owned(), format!("UniffiImplRust{type_name}")),
+        })
+    }
+
+    pub fn vtable_name(obj_name: &str) -> Result<String, askama::Error> {
+        Ok(oracle().vtable_name(obj_name))
     }
 
     pub fn lower_fn(as_type: &impl AsType) -> Result<String, askama::Error> {
@@ -544,33 +651,19 @@ pub mod filters {
         Ok(oracle().ffi_canonical_name(ffi_type))
     }
 
-    /// Like `ffi_type_name`, but used in `BridgingHeaderTemplate.h` which uses a slightly different
-    /// names.
     pub fn header_ffi_type_name(ffi_type: &FfiType) -> Result<String, askama::Error> {
-        Ok(match ffi_type {
-            FfiType::Int8 => "int8_t".into(),
-            FfiType::UInt8 => "uint8_t".into(),
-            FfiType::Int16 => "int16_t".into(),
-            FfiType::UInt16 => "uint16_t".into(),
-            FfiType::Int32 => "int32_t".into(),
-            FfiType::UInt32 => "uint32_t".into(),
-            FfiType::Int64 => "int64_t".into(),
-            FfiType::UInt64 => "uint64_t".into(),
-            FfiType::Float32 => "float".into(),
-            FfiType::Float64 => "double".into(),
-            FfiType::RustArcPtr(_) => "void*_Nonnull".into(),
-            FfiType::RustBuffer(_) => "RustBuffer".into(),
-            FfiType::ForeignBytes => "ForeignBytes".into(),
-            FfiType::ForeignCallback => "ForeignCallback _Nonnull".into(),
-            FfiType::ForeignExecutorCallback => "UniFfiForeignExecutorCallback _Nonnull".into(),
-            FfiType::ForeignExecutorHandle => "size_t".into(),
-            FfiType::RustFutureContinuationCallback => {
-                "UniFfiRustFutureContinuation _Nonnull".into()
-            }
-            FfiType::RustFutureHandle | FfiType::RustFutureContinuationData => {
-                "void* _Nonnull".into()
-            }
-        })
+        Ok(oracle().ffi_type_label(ffi_type))
+    }
+
+    pub fn header_prototype(func: &FfiFunction) -> Result<String, askama::Error> {
+        Ok(oracle().header_prototype(func))
+    }
+
+    pub fn header_prototype_trait_method(
+        func: &FfiFunction,
+        name: &str,
+    ) -> Result<String, askama::Error> {
+        Ok(oracle().header_prototype_trait_method(func, name))
     }
 
     /// Get the idiomatic Swift rendering of a class name (for enums, records, errors, etc).

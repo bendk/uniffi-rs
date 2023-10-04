@@ -8,7 +8,10 @@
 //! code loads the exported library. For each callback type, we also define a "cell" type for
 //! storing the callback.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    ptr::{null_mut, NonNull},
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
+};
 
 use crate::{ForeignExecutorHandle, RustBuffer, RustTaskCallback};
 
@@ -101,3 +104,28 @@ macro_rules! impl_foreign_callback_cell {
 
 impl_foreign_callback_cell!(ForeignCallback, ForeignCallbackCell);
 impl_foreign_callback_cell!(ForeignExecutorCallback, ForeignExecutorCallbackCell);
+
+// Cell type that stores any NonNull<T>
+#[doc(hidden)]
+pub struct UniffiForeignPointerCell<T>(AtomicPtr<T>);
+
+impl<T> UniffiForeignPointerCell<T> {
+    pub const fn new() -> Self {
+        Self(AtomicPtr::new(null_mut()))
+    }
+
+    pub fn set(&self, callback: NonNull<T>) {
+        self.0.store(callback.as_ptr(), Ordering::Relaxed);
+    }
+
+    pub fn get(&self) -> &mut T {
+        unsafe {
+            NonNull::new(self.0.load(Ordering::Relaxed))
+                .expect("Foreign pointer not set.  This is likely a uniffi bug.")
+                .as_mut()
+        }
+    }
+}
+
+unsafe impl<T> Send for UniffiForeignPointerCell<T> {}
+unsafe impl<T> Sync for UniffiForeignPointerCell<T> {}

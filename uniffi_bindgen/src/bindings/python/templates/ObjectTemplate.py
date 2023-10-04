@@ -63,8 +63,26 @@ class {{ type_name }}:
 {%      endmatch %}
 {% endfor %}
 
+{%- if obj.is_trait_interface() %}
+{%- include "TraitObjectImpl.py" %}
+{%- endif %}
 
 class {{ ffi_converter_name }}:
+    @staticmethod
+    def lift(value):
+        return {{ type_name }}._make_instance_(value)
+
+    @staticmethod
+    def lower(value):
+        {%- match imp %}
+        {%- when ObjectImpl::Struct %}
+        if not isinstance(value, {{ type_name }}):
+            raise TypeError("Expected {{ type_name }} instance, {} found".format(type(value).__name__))
+        return value._pointer
+        {%- when ObjectImpl::Trait %}
+        return UniffiTraitImpl{{ name }}._UniffiPointerManager.new_pointer(value)
+        {%- endmatch %}
+
     @classmethod
     def read(cls, buf):
         ptr = buf.read_u64()
@@ -74,14 +92,4 @@ class {{ ffi_converter_name }}:
 
     @classmethod
     def write(cls, value, buf):
-        if not isinstance(value, {{ type_name }}):
-            raise TypeError("Expected {{ type_name }} instance, {} found".format(type(value).__name__))
         buf.write_u64(cls.lower(value))
-
-    @staticmethod
-    def lift(value):
-        return {{ type_name }}._make_instance_(value)
-
-    @staticmethod
-    def lower(value):
-        return value._pointer

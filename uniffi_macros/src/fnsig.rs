@@ -100,10 +100,17 @@ impl FnSignature {
         })
     }
 
-    pub fn return_impl(&self) -> TokenStream {
+    pub fn lower_return_impl(&self) -> TokenStream {
         let return_ty = &self.return_ty;
         quote! {
             <#return_ty as ::uniffi::LowerReturn<crate::UniFfiTag>>
+        }
+    }
+
+    pub fn lift_return_impl(&self) -> TokenStream {
+        let return_ty = &self.return_ty;
+        quote! {
+            <#return_ty as ::uniffi::LiftReturn<crate::UniFfiTag>>
         }
     }
 

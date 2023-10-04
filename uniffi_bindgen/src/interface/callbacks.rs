@@ -78,7 +78,7 @@ impl CallbackInterface {
 
     pub(super) fn derive_ffi_funcs(&mut self) {
         self.ffi_init_callback.name =
-            uniffi_meta::init_callback_fn_symbol_name(&self.module_path, &self.name);
+            uniffi_meta::init_trait_callback_fn_symbol_name(&self.module_path, &self.name);
         self.ffi_init_callback.arguments = vec![FfiArgument {
             name: "callback_stub".to_string(),
             type_: FfiType::ForeignCallback,

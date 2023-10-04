@@ -6,6 +6,10 @@ class _UniffiRustBuffer(ctypes.Structure):
         ("data", ctypes.POINTER(ctypes.c_char)),
     ]
 
+    @classmethod
+    def default(cls):
+        cls(0, 0, None)
+
     @staticmethod
     def alloc(size):
         return _rust_call(_UniffiLib.{{ ci.ffi_rustbuffer_alloc().name() }}, size)

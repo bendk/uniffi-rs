@@ -201,7 +201,7 @@ where
 /// These traits should not be used directly, only in generated code, and the generated code should
 /// have fixture tests to test that everything works correctly together.
 pub unsafe trait Lift<UT>: Sized {
-    type FfiType;
+    type FfiType: FfiDefault;
 
     fn try_lift(v: Self::FfiType) -> Result<Self>;
 
@@ -306,7 +306,7 @@ pub unsafe trait LowerReturn<UT>: Sized {
 /// have fixture tests to test that everything works correctly together.
 pub unsafe trait LiftReturn<UT>: Sized {
     /// FFI return type for trait interfaces
-    type ReturnType;
+    type ReturnType: FfiDefault;
 
     /// Lift a successfully returned value from a trait interface
     fn try_lift_successful_return(v: Self::ReturnType) -> Result<Self>;

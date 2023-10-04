@@ -2,8 +2,10 @@
 {%- if self.include_once_check("ObjectRuntime.kt") %}{% include "ObjectRuntime.kt" %}{% endif %}
 {{- self.add_import("java.util.concurrent.atomic.AtomicLong") }}
 {{- self.add_import("java.util.concurrent.atomic.AtomicBoolean") }}
+{%- let interface_name = type_name|interface_name(imp) %}
+{%- let rust_impl_class_name = type_name|rust_impl_class_name(imp) %}
 
-public interface {{ type_name }}Interface {
+public interface {{ interface_name }} {
     {% for meth in obj.methods() -%}
     {%- match meth.throws_type() -%}
     {%- when Some with (throwable) -%}
@@ -24,9 +26,9 @@ public interface {{ type_name }}Interface {
     companion object
 }
 
-class {{ type_name }}(
+class {{ rust_impl_class_name }}(
     pointer: Pointer
-) : FFIObject(pointer), {{ type_name }}Interface {
+) : FFIObject(pointer), {{ interface_name }} {
 
     {%- match obj.primary_constructor() %}
     {%- when Some with (cons) %}
@@ -115,11 +117,22 @@ class {{ type_name }}(
     {% endif %}
 }
 
+{%- if obj.is_trait_interface() %}
+{% include "TraitObjectImpl.kt" %}
+{%- endif %}
+
 public object {{ obj|ffi_converter_name }}: FfiConverter<{{ type_name }}, Pointer> {
-    override fun lower(value: {{ type_name }}): Pointer = value.callWithPointer { it }
+    override fun lower(value: {{ type_name }}): Pointer {
+        {%- match imp %}
+        {%- when ObjectImpl::Struct %}
+        return value.callWithPointer { it }
+        {%- when ObjectImpl::Trait %}
+        return {{ "uniffiTraitHandleMap{name}"|format }}.insert(value).toPointer()
+        {%- endmatch %}
+    }
 
     override fun lift(value: Pointer): {{ type_name }} {
-        return {{ type_name }}(value)
+        return {{ rust_impl_class_name }}(value)
     }
 
     override fun read(buf: ByteBuffer): {{ type_name }} {
@@ -136,3 +149,4 @@ public object {{ obj|ffi_converter_name }}: FfiConverter<{{ type_name }}, Pointe
         buf.putLong(Pointer.nativeValue(lower(value)))
     }
 }
+

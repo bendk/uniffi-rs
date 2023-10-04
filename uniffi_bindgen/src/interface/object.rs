@@ -92,7 +92,7 @@ pub struct Object {
     // a regular method (albeit with a generated name)
     // XXX - this should really be a HashSet, but not enough transient types support hash to make it worthwhile now.
     pub(super) uniffi_traits: Vec<UniffiTrait>,
-    // We don't include the FfiFunc in the hash calculation, because:
+    // We don't include the FfiFuncs in the hash calculation, because:
     //  - it is entirely determined by the other fields,
     //    so excluding it is safe.
     //  - its `name` property includes a checksum derived from  the very
@@ -100,6 +100,8 @@ pub struct Object {
     //    avoids a weird circular dependency in the calculation.
     #[checksum_ignore]
     pub(super) ffi_func_free: FfiFunction,
+    #[checksum_ignore]
+    pub(super) ffi_init_trait_callback: Option<FfiFunction>,
 }
 
 impl Object {
@@ -116,6 +118,10 @@ impl Object {
 
     pub fn imp(&self) -> &ObjectImpl {
         &self.imp
+    }
+
+    pub fn is_trait_interface(&self) -> bool {
+        matches!(self.imp, ObjectImpl::Trait)
     }
 
     pub fn constructors(&self) -> Vec<&Constructor> {
@@ -155,8 +161,26 @@ impl Object {
         &self.ffi_func_free
     }
 
+    /// For trait interfaces, the initialization function
+    ///
+    /// The foreign side passes a trait VTable pointer to this function to handle
+    /// foreign-implemented trait objects.
+    pub fn ffi_init_trait_callback(&self) -> &FfiFunction {
+        if self.is_trait_interface() {
+            self.ffi_init_trait_callback.as_ref().unwrap_or_else(|| {
+                panic!(
+                    "No ffi_init_trait_callback set for trait interface {}",
+                    self.name
+                )
+            })
+        } else {
+            panic!("{} is not a trait interface", self.name);
+        }
+    }
+
     pub fn iter_ffi_function_definitions(&self) -> impl Iterator<Item = &FfiFunction> {
         iter::once(&self.ffi_func_free)
+            .chain(self.ffi_init_trait_callback.iter())
             .chain(self.constructors.iter().map(|f| &f.ffi_func))
             .chain(self.methods.iter().map(|f| &f.ffi_func))
             .chain(
@@ -175,11 +199,19 @@ impl Object {
     pub fn derive_ffi_funcs(&mut self) -> Result<()> {
         assert!(!self.ffi_func_free.name().is_empty());
         self.ffi_func_free.arguments = vec![FfiArgument {
-            name: "ptr".to_string(),
-            type_: FfiType::RustArcPtr(self.name.to_string()),
+            name: "ptr".to_owned(),
+            type_: FfiType::RustArcPtr(self.name.to_owned()),
         }];
         self.ffi_func_free.return_type = None;
         self.ffi_func_free.is_object_free_function = true;
+        if let Some(ffi_init_trait_callback) = &mut self.ffi_init_trait_callback {
+            ffi_init_trait_callback.arguments = vec![FfiArgument {
+                name: "vtable".to_owned(),
+                type_: FfiType::VTable(self.name.to_owned()),
+            }];
+            ffi_init_trait_callback.return_type = None;
+            ffi_init_trait_callback.has_rust_call_status_arg = false;
+        }
 
         for cons in self.constructors.iter_mut() {
             cons.derive_ffi_func();
@@ -219,6 +251,12 @@ impl AsType for Object {
 impl From<uniffi_meta::ObjectMetadata> for Object {
     fn from(meta: uniffi_meta::ObjectMetadata) -> Self {
         let ffi_free_name = meta.free_ffi_symbol_name();
+        let ffi_init_trait_callback =
+            meta.init_trait_callback_ffi_symbol_name()
+                .map(|name| FfiFunction {
+                    name,
+                    ..Default::default()
+                });
         Object {
             module_path: meta.module_path,
             name: meta.name,
@@ -230,6 +268,7 @@ impl From<uniffi_meta::ObjectMetadata> for Object {
                 name: ffi_free_name,
                 ..Default::default()
             },
+            ffi_init_trait_callback,
         }
     }
 }

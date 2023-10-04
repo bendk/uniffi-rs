@@ -1,5 +1,7 @@
 {%- let obj = ci|get_object_definition(name) %}
-public protocol {{ obj.name() }}Protocol {
+{%- let (protocol_name, rust_impl_class_name) = type_name|object_type_names(imp) %}
+
+public protocol {{ protocol_name }} : AnyObject {
     {% for meth in obj.methods() -%}
     func {{ meth.name()|fn_name }}({% call swift::arg_list_protocol(meth) %}) {% call swift::async(meth) %} {% call swift::throws(meth) -%}
     {%- match meth.return_type() -%}
@@ -9,7 +11,7 @@ public protocol {{ obj.name() }}Protocol {
     {% endfor %}
 }
 
-public class {{ type_name }}: {{ obj.name() }}Protocol {
+public class {{ rust_impl_class_name }}: {{ protocol_name }} {
     fileprivate let pointer: UnsafeMutableRawPointer
 
     // TODO: We'd like this to be `private` but for Swifty reasons,
@@ -95,9 +97,19 @@ public class {{ type_name }}: {{ obj.name() }}Protocol {
     {% endfor %}
 }
 
+{%- match imp %}
+{%- when ObjectImpl::Struct %}
 public struct {{ ffi_converter_name }}: FfiConverter {
     typealias FfiType = UnsafeMutableRawPointer
     typealias SwiftType = {{ type_name }}
+
+    public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> {{ type_name }} {
+        return {{ type_name }}(unsafeFromRawPointer: pointer)
+    }
+
+    public static func lower(_ value: {{ type_name }}) -> UnsafeMutableRawPointer {
+        return value.pointer
+    }
 
     public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> {{ type_name }} {
         let v: UInt64 = try readInt(&buf)
@@ -116,14 +128,41 @@ public struct {{ ffi_converter_name }}: FfiConverter {
         writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
     }
 
+}
+{%- when ObjectImpl::Trait %}
+{% include "TraitObjectImpl.swift" %}
+
+public struct {{ ffi_converter_name }}: FfiConverter {
+    typealias FfiType = UnsafeMutableRawPointer
+    typealias SwiftType = {{ type_name }}
+
     public static func lift(_ pointer: UnsafeMutableRawPointer) throws -> {{ type_name }} {
-        return {{ type_name}}(unsafeFromRawPointer: pointer)
+        return {{ rust_impl_class_name }}(unsafeFromRawPointer: pointer)
     }
 
     public static func lower(_ value: {{ type_name }}) -> UnsafeMutableRawPointer {
-        return value.pointer
+        Unmanaged<AnyObject>.passRetained(value as AnyObject).toOpaque()
     }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> {{ type_name }} {
+        let v: UInt64 = try readInt(&buf)
+        // The Rust code won't compile if a pointer won't fit in a UInt64.
+        // We have to go via `UInt` because that's the thing that's the size of a pointer.
+        let ptr = UnsafeMutableRawPointer(bitPattern: UInt(truncatingIfNeeded: v))
+        if (ptr == nil) {
+            throw UniffiInternalError.unexpectedNullPointer
+        }
+        return try lift(ptr!)
+    }
+
+    public static func write(_ value: {{ type_name }}, into buf: inout [UInt8]) {
+        // This fiddling is because `Int` is the thing that's the same size as a pointer.
+        // The Rust code won't compile if a pointer won't fit in a `UInt64`.
+        writeInt(&buf, UInt64(bitPattern: Int64(Int(bitPattern: lower(value)))))
+    }
+
 }
+{%- endmatch %}
 
 {#
 We always write these public functions just in case the enum is used as

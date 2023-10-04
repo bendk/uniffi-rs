@@ -20,6 +20,7 @@ import enum
 import struct
 import contextlib
 import datetime
+import threading
 import typing
 {%- if ci.has_async_fns() %}
 import asyncio

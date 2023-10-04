@@ -59,6 +59,11 @@ pub enum FfiType {
     /// Continuation function for a Rust future
     RustFutureContinuationCallback,
     RustFutureContinuationData,
+    /// VTable for a trait interface
+    ///
+    /// This is a C struct with fields for each method and for the free method.  See
+    /// `uniffi_macros/src/export/trait_interface.rs` for the exact layout of this struct.
+    VTable(String),
     // TODO: you can imagine a richer structural typesystem here, e.g. `Ref<String>` or something.
     // We don't need that yet and it's possible we never will, so it isn't here for now.
 }
