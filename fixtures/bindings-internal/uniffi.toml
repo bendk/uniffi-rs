@@ -1,0 +1,5 @@
+[bindings.kotlin]
+test_mode = true
+
+[bindings.swift]
+test_mode = true

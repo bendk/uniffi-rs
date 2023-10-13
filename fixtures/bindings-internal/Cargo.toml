@@ -1,0 +1,20 @@
+[package]
+name = "uniffi-fixture-bindings-internal"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["lib", "cdylib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+proptest = "1.0"
+thiserror = "1"
+uniffi = {path = "../../uniffi", version = "0.24" }
+
+[build-dependencies]
+uniffi = {path = "../../uniffi", version = "0.24", features = ["build"] }
+
+[dev-dependencies]
+uniffi = {path = "../../uniffi", version = "0.24", features = ["bindgen-tests"] }

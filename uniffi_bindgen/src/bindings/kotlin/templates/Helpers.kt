@@ -21,7 +21,7 @@ internal open class RustCallStatus : Structure() {
     }
 }
 
-class InternalException(message: String) : Exception(message)
+open class InternalException(message: String) : Exception(message)
 
 // Each top-level error class has a companion object that can lift the error from the call status's rust buffer
 interface CallStatusErrorHandler<E> {

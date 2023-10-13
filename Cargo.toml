@@ -22,6 +22,7 @@ members = [
   "examples/traits",
 
   "fixtures/benchmarks",
+  "fixtures/bindings-internal",
   "fixtures/coverall",
   "fixtures/callbacks",
 

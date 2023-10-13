@@ -28,7 +28,11 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.CharBuffer
 import java.nio.charset.CodingErrorAction
+import java.util.ArrayList
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.withLock
 
 {%- for req in self.imports() %}
 {{ req.render() }}
@@ -37,6 +41,7 @@ import java.util.concurrent.ConcurrentHashMap
 {% include "RustBufferTemplate.kt" %}
 {% include "FfiConverterTemplate.kt" %}
 {% include "Helpers.kt" %}
+{% include "Slab.kt" %}
 
 // Contains loading, initialization code,
 // and the FFI Function declarations in a com.sun.jna.Library.

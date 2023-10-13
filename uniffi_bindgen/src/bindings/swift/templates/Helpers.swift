@@ -1,6 +1,7 @@
 // An error type for FFI errors. These errors occur at the UniFFI level, not
 // the library level.
-fileprivate enum UniffiInternalError: LocalizedError {
+// public so we can test it in fixtures-bindings-internal
+{{ internal_component_vis }} enum UniffiInternalError: LocalizedError {
     case bufferOverflow
     case incompleteData
     case unexpectedOptionalTag
@@ -9,6 +10,8 @@ fileprivate enum UniffiInternalError: LocalizedError {
     case unexpectedRustCallStatusCode
     case unexpectedRustCallError
     case unexpectedStaleHandle
+    case slabUseAfterFree(_ message: String)
+    case slabError(_ message: String)
     case rustPanic(_ message: String)
 
     public var errorDescription: String? {
@@ -21,8 +24,18 @@ fileprivate enum UniffiInternalError: LocalizedError {
         case .unexpectedRustCallStatusCode: return "Unexpected RustCallStatus code"
         case .unexpectedRustCallError: return "CALL_ERROR but no errorClass specified"
         case .unexpectedStaleHandle: return "The object in the handle map has been dropped already"
+        case let .slabUseAfterFree(message): return "Slab use-after-free: \(message)"
+        case let .slabError(message): return "Slab error: \(message)"
         case let .rustPanic(message): return message
         }
+    }
+}
+
+fileprivate extension NSLock {
+    func withLock<T>(f: () throws -> T) rethrows -> T {
+        self.lock()
+        defer { self.unlock() }
+        return try f()
     }
 }
 

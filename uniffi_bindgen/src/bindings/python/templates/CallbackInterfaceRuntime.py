@@ -1,5 +1,3 @@
-import threading
-
 class ConcurrentHandleMap:
     """
     A map where inserting, getting and removing data is synchronized with a lock.

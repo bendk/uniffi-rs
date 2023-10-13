@@ -1,11 +1,3 @@
-fileprivate extension NSLock {
-    func withLock<T>(f: () throws -> T) rethrows -> T {
-        self.lock()
-        defer { self.unlock() }
-        return try f()
-    }
-}
-
 fileprivate typealias UniFFICallbackHandle = UInt64
 fileprivate class UniFFICallbackHandleMap<T> {
     private var leftMap: [UniFFICallbackHandle: T] = [:]

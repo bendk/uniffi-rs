@@ -138,6 +138,8 @@ pub struct Config {
     omit_argument_labels: Option<bool>,
     #[serde(default)]
     custom_types: HashMap<String, CustomTypeConfig>,
+    #[serde(default)]
+    test_mode: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -341,18 +343,26 @@ pub struct SwiftWrapper<'a> {
     type_helper_code: String,
     type_imports: BTreeSet<String>,
     has_async_fns: bool,
+    internal_component_vis: String,
 }
 impl<'a> SwiftWrapper<'a> {
     pub fn new(config: Config, ci: &'a ComponentInterface) -> Self {
         let type_renderer = TypeRenderer::new(&config, ci);
         let type_helper_code = type_renderer.render().unwrap();
         let type_imports = type_renderer.imports.into_inner();
+        let internal_component_vis = if config.test_mode {
+            "public"
+        } else {
+            "fileprivate"
+        }
+        .to_owned();
         Self {
             config,
             ci,
             type_helper_code,
             type_imports,
             has_async_fns: ci.has_async_fns(),
+            internal_component_vis,
         }
     }
 

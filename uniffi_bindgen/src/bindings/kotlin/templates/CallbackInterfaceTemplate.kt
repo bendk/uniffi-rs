@@ -4,8 +4,6 @@
 
 {% if self.include_once_check("CallbackInterfaceRuntime.kt") %}{% include "CallbackInterfaceRuntime.kt" %}{% endif %}
 {{- self.add_import("java.util.concurrent.atomic.AtomicLong") }}
-{{- self.add_import("java.util.concurrent.locks.ReentrantLock") }}
-{{- self.add_import("kotlin.concurrent.withLock") }}
 
 // Declaration and FfiConverters for {{ type_name }} Callback Interface
 

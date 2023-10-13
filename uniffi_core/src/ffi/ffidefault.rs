@@ -62,3 +62,9 @@ impl<T> FfiDefault for Option<T> {
         None
     }
 }
+
+impl FfiDefault for crate::Handle {
+    fn ffi_default() -> Self {
+        Self::from_raw(0)
+    }
+}

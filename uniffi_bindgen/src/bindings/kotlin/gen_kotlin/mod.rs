@@ -37,6 +37,8 @@ pub struct Config {
     custom_types: HashMap<String, CustomTypeConfig>,
     #[serde(default)]
     external_packages: HashMap<String, String>,
+    #[serde(default)]
+    test_mode: bool,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -197,6 +199,7 @@ pub struct KotlinWrapper<'a> {
     type_helper_code: String,
     type_imports: BTreeSet<ImportRequirement>,
     has_async_fns: bool,
+    internal_component_vis: String,
 }
 
 impl<'a> KotlinWrapper<'a> {
@@ -204,12 +207,19 @@ impl<'a> KotlinWrapper<'a> {
         let type_renderer = TypeRenderer::new(&config, ci);
         let type_helper_code = type_renderer.render().unwrap();
         let type_imports = type_renderer.imports.into_inner();
+        let internal_component_vis = if config.test_mode {
+            "public"
+        } else {
+            "internal"
+        }
+        .to_owned();
         Self {
             config,
             ci,
             type_helper_code,
             type_imports,
             has_async_fns: ci.has_async_fns(),
+            internal_component_vis,
         }
     }
 
