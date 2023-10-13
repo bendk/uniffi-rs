@@ -169,6 +169,7 @@ fn rust_future_scaffolding_fns(module_path: &str) -> TokenStream {
         (quote! { i64 }, "i64"),
         (quote! { f32 }, "f32"),
         (quote! { f64 }, "f64"),
+        (quote! { ::uniffi::Handle }, "handle"),
         (quote! { *const ::std::ffi::c_void }, "pointer"),
         (quote! { ::uniffi::RustBuffer }, "rust_buffer"),
         (quote! { () }, "void"),

@@ -1,7 +1,5 @@
 {%- let obj = ci|get_object_definition(name) %}
 {%- if self.include_once_check("ObjectRuntime.kt") %}{% include "ObjectRuntime.kt" %}{% endif %}
-{{- self.add_import("java.util.concurrent.atomic.AtomicLong") }}
-{{- self.add_import("java.util.concurrent.atomic.AtomicBoolean") }}
 
 public interface {{ type_name }}Interface {
     {% for meth in obj.methods() -%}
@@ -25,8 +23,8 @@ public interface {{ type_name }}Interface {
 }
 
 class {{ type_name }}(
-    pointer: Pointer
-) : FFIObject(pointer), {{ type_name }}Interface {
+    handle: Int
+) : FFIObject(handle), {{ type_name }}Interface {
 
     {%- match obj.primary_constructor() %}
     {%- when Some with (cons) %}
@@ -45,7 +43,7 @@ class {{ type_name }}(
      */
     override protected fun freeRustArcPtr() {
         rustCall() { status ->
-            _UniFFILib.INSTANCE.{{ obj.ffi_object_free().name() }}(this.pointer, status)
+            _UniFFILib.INSTANCE.{{ obj.ffi_object_free().name() }}(this.uniffiHandle, status)
         }
     }
 
@@ -59,9 +57,9 @@ class {{ type_name }}(
     @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
     override suspend fun {{ meth.name()|fn_name }}({%- call kt::arg_list_decl(meth) -%}){% match meth.return_type() %}{% when Some with (return_type) %} : {{ return_type|type_name }}{% when None %}{%- endmatch %} {
         return uniffiRustCallAsync(
-            callWithPointer { thisPtr ->
+            callWithHandle { handle ->
                 _UniFFILib.INSTANCE.{{ meth.ffi_func().name() }}(
-                    thisPtr,
+                    handle,
                     {% call kt::arg_list_lowered(meth) %}
                 )
             },
@@ -88,7 +86,7 @@ class {{ type_name }}(
     {%- match meth.return_type() -%}
     {%- when Some with (return_type) -%}
     override fun {{ meth.name()|fn_name }}({% call kt::arg_list_protocol(meth) %}): {{ return_type|type_name }} =
-        callWithPointer {
+        callWithHandle {
             {%- call kt::to_ffi_call_with_prefix("it", meth) %}
         }.let {
             {{ return_type|lift_fn }}(it)
@@ -96,7 +94,7 @@ class {{ type_name }}(
 
     {%- when None -%}
     override fun {{ meth.name()|fn_name }}({% call kt::arg_list_protocol(meth) %}) =
-        callWithPointer {
+        callWithHandle {
             {%- call kt::to_ffi_call_with_prefix("it", meth) %}
         }
     {% endmatch %}
@@ -115,24 +113,20 @@ class {{ type_name }}(
     {% endif %}
 }
 
-public object {{ obj|ffi_converter_name }}: FfiConverter<{{ type_name }}, Pointer> {
-    override fun lower(value: {{ type_name }}): Pointer = value.callWithPointer { it }
+public object {{ obj|ffi_converter_name }}: FfiConverter<{{ type_name }}, Int> {
+    override fun lower(value: {{ type_name }}): Int = value.uniffiHandle
 
-    override fun lift(value: Pointer): {{ type_name }} {
+    override fun lift(value: Int): {{ type_name }} {
         return {{ type_name }}(value)
     }
 
     override fun read(buf: ByteBuffer): {{ type_name }} {
-        // The Rust code always writes pointers as 8 bytes, and will
-        // fail to compile if they don't fit.
-        return lift(Pointer(buf.getLong()))
+        return lift(buf.getInt())
     }
 
-    override fun allocationSize(value: {{ type_name }}) = 8
+    override fun allocationSize(value: {{ type_name }}) = 4
 
     override fun write(value: {{ type_name }}, buf: ByteBuffer) {
-        // The Rust code always expects pointers written as 8 bytes,
-        // and will fail to compile if they don't fit.
-        buf.putLong(Pointer.nativeValue(lower(value)))
+        buf.putInt(lower(value))
     }
 }

@@ -1,5 +1,5 @@
 use proc_macro2::{Ident, Span, TokenStream};
-use quote::quote;
+use quote::{format_ident, quote};
 use syn::DeriveInput;
 use uniffi_meta::free_fn_symbol_name;
 
@@ -9,26 +9,23 @@ pub fn expand_object(input: DeriveInput, udl_mode: bool) -> syn::Result<TokenStr
     let module_path = mod_path()?;
     let ident = &input.ident;
     let name = ident_to_string(ident);
+    let slab_ident = format_ident!("UNIFFI_SLAB_OBJECT_{}", name.to_uppercase());
     let free_fn_ident = Ident::new(&free_fn_symbol_name(&module_path, &name), Span::call_site());
     let meta_static_var = (!udl_mode).then(|| {
         interface_meta_static_var(ident, false, &module_path)
             .unwrap_or_else(syn::Error::into_compile_error)
     });
-    let interface_impl = interface_impl(ident, udl_mode);
+    let interface_impl = interface_impl(ident, &slab_ident, udl_mode);
 
     Ok(quote! {
         #[doc(hidden)]
         #[no_mangle]
         pub extern "C" fn #free_fn_ident(
-            ptr: *const ::std::ffi::c_void,
+            handle: ::uniffi::Handle,
             call_status: &mut ::uniffi::RustCallStatus
         ) {
             uniffi::rust_call(call_status, || {
-                assert!(!ptr.is_null());
-                let ptr = ptr.cast::<#ident>();
-                unsafe {
-                    ::std::sync::Arc::decrement_strong_count(ptr);
-                }
+                #slab_ident.remove_unchecked(handle);
                 Ok(())
             });
         }
@@ -38,7 +35,7 @@ pub fn expand_object(input: DeriveInput, udl_mode: bool) -> syn::Result<TokenStr
     })
 }
 
-pub(crate) fn interface_impl(ident: &Ident, udl_mode: bool) -> TokenStream {
+pub(crate) fn interface_impl(ident: &Ident, slab_ident: &Ident, udl_mode: bool) -> TokenStream {
     let name = ident_to_string(ident);
     let impl_spec = tagged_impl_header("FfiConverterArc", ident, udl_mode);
     let lift_ref_impl_spec = tagged_impl_header("LiftRef", ident, udl_mode);
@@ -54,6 +51,8 @@ pub(crate) fn interface_impl(ident: &Ident, udl_mode: bool) -> TokenStream {
         // and thus help the user debug why the requirement isn't being met.
         uniffi::deps::static_assertions::assert_impl_all!(#ident: Sync, Send);
 
+        static #slab_ident: ::uniffi::Slab<::std::sync::Arc<#ident>> = ::uniffi::Slab::<::std::sync::Arc<#ident>>::new();
+
         #[doc(hidden)]
         #[automatically_derived]
         /// Support for passing reference-counted shared objects via the FFI.
@@ -62,8 +61,7 @@ pub(crate) fn interface_impl(ident: &Ident, udl_mode: bool) -> TokenStream {
         /// by reference must be encapsulated in an `Arc`, and must be safe to share
         /// across threads.
         unsafe #impl_spec {
-            // Don't use a pointer to <T> as that requires a `pub <T>`
-            type FfiType = *const ::std::os::raw::c_void;
+            type FfiType = ::uniffi::Handle;
 
             /// When lowering, we have an owned `Arc` and we transfer that ownership
             /// to the foreign-language code, "leaking" it out of Rust's ownership system
@@ -75,7 +73,7 @@ pub(crate) fn interface_impl(ident: &Ident, udl_mode: bool) -> TokenStream {
             /// call the destructor function specific to the type `T`. Calling the destructor
             /// function for other types may lead to undefined behaviour.
             fn lower(obj: ::std::sync::Arc<Self>) -> Self::FfiType {
-                ::std::sync::Arc::into_raw(obj) as Self::FfiType
+                #slab_ident.insert_unchecked(obj)
             }
 
             /// When lifting, we receive a "borrow" of the `Arc` that is owned by
@@ -84,11 +82,7 @@ pub(crate) fn interface_impl(ident: &Ident, udl_mode: bool) -> TokenStream {
             /// Safety: the provided value must be a pointer previously obtained by calling
             /// the `lower()` or `write()` method of this impl.
             fn try_lift(v: Self::FfiType) -> ::uniffi::Result<::std::sync::Arc<Self>> {
-                let v = v as *const #ident;
-                // We musn't drop the `Arc` that is owned by the foreign-language code.
-                let foreign_arc = ::std::mem::ManuallyDrop::new(unsafe { ::std::sync::Arc::<Self>::from_raw(v) });
-                // Take a clone for our own use.
-                Ok(::std::sync::Arc::clone(&*foreign_arc))
+                Ok(#slab_ident.get_clone_unchecked(v))
             }
 
             /// When writing as a field of a complex structure, make a clone and transfer ownership
@@ -100,8 +94,7 @@ pub(crate) fn interface_impl(ident: &Ident, udl_mode: bool) -> TokenStream {
             /// call the destructor function specific to the type `T`. Calling the destructor
             /// function for other types may lead to undefined behaviour.
             fn write(obj: ::std::sync::Arc<Self>, buf: &mut Vec<u8>) {
-                ::uniffi::deps::static_assertions::const_assert!(::std::mem::size_of::<*const ::std::ffi::c_void>() <= 8);
-                ::uniffi::deps::bytes::BufMut::put_u64(buf, <Self as ::uniffi::FfiConverterArc<crate::UniFfiTag>>::lower(obj) as u64);
+                ::uniffi::deps::bytes::BufMut::put_u32(buf, <Self as ::uniffi::FfiConverterArc<crate::UniFfiTag>>::lower(obj).as_u32())
             }
 
             /// When reading as a field of a complex structure, we receive a "borrow" of the `Arc`
@@ -110,9 +103,7 @@ pub(crate) fn interface_impl(ident: &Ident, udl_mode: bool) -> TokenStream {
             /// Safety: the buffer must contain a pointer previously obtained by calling
             /// the `lower()` or `write()` method of this impl.
             fn try_read(buf: &mut &[u8]) -> ::uniffi::Result<::std::sync::Arc<Self>> {
-                ::uniffi::deps::static_assertions::const_assert!(::std::mem::size_of::<*const ::std::ffi::c_void>() <= 8);
-                ::uniffi::check_remaining(buf, 8)?;
-                <Self as ::uniffi::FfiConverterArc<crate::UniFfiTag>>::try_lift(::uniffi::deps::bytes::Buf::get_u64(buf) as Self::FfiType)
+                <Self as ::uniffi::FfiConverterArc<crate::UniFfiTag>>::try_lift(::uniffi::Handle::from_u32(::uniffi::deps::bytes::Buf::get_u32(buf)))
             }
 
             const TYPE_ID_META: ::uniffi::MetadataBuffer = ::uniffi::MetadataBuffer::from_code(::uniffi::metadata::codes::TYPE_INTERFACE)

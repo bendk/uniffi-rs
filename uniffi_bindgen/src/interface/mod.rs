@@ -530,6 +530,7 @@ impl ComponentInterface {
                 FfiType::Int64 => format!("ffi_{namespace}_{base_name}_i64"),
                 FfiType::Float32 => format!("ffi_{namespace}_{base_name}_f32"),
                 FfiType::Float64 => format!("ffi_{namespace}_{base_name}_f64"),
+                FfiType::Handle => format!("ffi_{namespace}_{base_name}_handle"),
                 FfiType::RustArcPtr(_) => format!("ffi_{namespace}_{base_name}_pointer"),
                 FfiType::RustBuffer(_) => format!("ffi_{namespace}_{base_name}_rust_buffer"),
                 _ => unimplemented!("FFI return type: {t:?}"),
@@ -631,6 +632,7 @@ impl ComponentInterface {
             Some(FfiType::Int64),
             Some(FfiType::Float32),
             Some(FfiType::Float64),
+            Some(FfiType::Handle),
             // RustBuffer and RustArcPtr have an inner field which doesn't affect the rust future
             // complete scaffolding function, so we just use a placeholder value here.
             Some(FfiType::RustArcPtr("".to_owned())),

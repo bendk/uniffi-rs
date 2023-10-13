@@ -163,8 +163,8 @@ class RustBufferBuilder
   # The Object type {{ object_name }}.
 
   def write_{{ canonical_type_name }}(obj)
-    pointer = {{ object_name|class_name_rb}}._uniffi_lower obj
-    pack_into(8, 'Q>', pointer.address)
+    handle = {{ ci.namespace()|class_name_rb }}::uniffi_in_range(obj.handle, "handle", 0, 2**32)
+    pack_into(4, 'L>', handle)
   end
 
   {% when Type::Enum { name: enum_name, module_path } -%}

@@ -33,6 +33,9 @@ pub enum FfiType {
     Int64,
     Float32,
     Float64,
+    // 32-bit opaque handle.  Used for:
+    //   - Objects
+    Handle,
     /// A `*const c_void` pointer to a rust-owned `Arc<T>`.
     /// If you've got one of these, you must call the appropriate rust function to free it.
     /// The templates will generate a unique `free` function for each T.
@@ -91,7 +94,7 @@ impl From<&Type> for FfiType {
             // We might add a separate type for borrowed byte strings in future as well.
             Type::Bytes => FfiType::RustBuffer(None),
             // Objects are pointers to an Arc<>
-            Type::Object { name, .. } => FfiType::RustArcPtr(name.to_owned()),
+            Type::Object { .. } => FfiType::Handle,
             // Callback interfaces are passed as opaque integer handles.
             Type::CallbackInterface { .. } => FfiType::UInt64,
             Type::ForeignExecutor => FfiType::ForeignExecutorHandle,
