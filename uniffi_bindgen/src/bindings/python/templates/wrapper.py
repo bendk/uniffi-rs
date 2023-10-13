@@ -21,6 +21,7 @@ import struct
 import contextlib
 import datetime
 import typing
+import threading
 {%- if ci.has_async_fns() %}
 import asyncio
 {%- endif %}
@@ -28,12 +29,14 @@ import platform
 {%- for req in self.imports() %}
 {{ req.render() }}
 {%- endfor %}
+from dataclasses import dataclass
 
 # Used for default argument values
 _DEFAULT = object()
 
 {% include "RustBufferTemplate.py" %}
 {% include "Helpers.py" %}
+{% include "Slab.py" %}
 {% include "PointerManager.py" %}
 {% include "RustBufferHelper.py" %}
 

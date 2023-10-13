@@ -15,6 +15,7 @@ import {{ config.ffi_module_name() }}
 
 {% include "RustBufferTemplate.swift" %}
 {% include "Helpers.swift" %}
+{% include "Slab.swift" %}
 
 // Public interface members begin here.
 {{ type_helper_code }}
