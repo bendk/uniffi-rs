@@ -299,6 +299,7 @@ impl PythonCodeOracle {
             FfiType::UInt64 => "ctypes.c_uint64".to_string(),
             FfiType::Float32 => "ctypes.c_float".to_string(),
             FfiType::Float64 => "ctypes.c_double".to_string(),
+            FfiType::Handle => "ctypes.c_uint32".to_string(),
             FfiType::RustArcPtr(_) => "ctypes.c_void_p".to_string(),
             FfiType::RustBuffer(maybe_suffix) => match maybe_suffix {
                 Some(suffix) => format!("_UniffiRustBuffer{suffix}"),

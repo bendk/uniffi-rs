@@ -1,3 +1,6 @@
+{{- self.add_import("java.util.concurrent.atomic.AtomicLong") }}
+{{- self.add_import("java.util.concurrent.atomic.AtomicBoolean") }}
+
 // Interface implemented by anything that can contain an object reference.
 //
 // Such types expose a `destroy()` method that must be called to cleanly
@@ -30,18 +33,18 @@ inline fun <T : Disposable?, R> T.use(block: (T) -> R) =
 
 // The base class for all UniFFI Object types.
 //
-// This class provides core operations for working with the Rust `Arc<T>` pointer to
+// This class provides core operations for working with the Rust `Arc<T>` handle to
 // the live Rust struct on the other side of the FFI.
 //
 // There's some subtlety here, because we have to be careful not to operate on a Rust
 // struct after it has been dropped, and because we must expose a public API for freeing
 // the Kotlin wrapper object in lieu of reliable finalizers. The core requirements are:
 //
-//   * Each `FFIObject` instance holds an opaque pointer to the underlying Rust struct.
-//     Method calls need to read this pointer from the object's state and pass it in to
+//   * Each `FFIObject` instance holds an opaque handle to the underlying Rust struct.
+//     Method calls need to read this handle from the object's state and pass it in to
 //     the Rust FFI.
 //
-//   * When an `FFIObject` is no longer needed, its pointer should be passed to a
+//   * When an `FFIObject` is no longer needed, its handle should be passed to a
 //     special destructor function provided by the Rust FFI, which will drop the
 //     underlying Rust struct.
 //
@@ -58,13 +61,13 @@ inline fun <T : Disposable?, R> T.use(block: (T) -> R) =
 //     the destructor has been called, and must never call the destructor more than once.
 //     Doing so may trigger memory unsafety.
 //
-// If we try to implement this with mutual exclusion on access to the pointer, there is the
+// If we try to implement this with mutual exclusion on access to the handle, there is the
 // possibility of a race between a method call and a concurrent call to `destroy`:
 //
-//    * Thread A starts a method call, reads the value of the pointer, but is interrupted
-//      before it can pass the pointer over the FFI to Rust.
+//    * Thread A starts a method call, reads the value of the handle, but is interrupted
+//      before it can pass the handle over the FFI to Rust.
 //    * Thread B calls `destroy` and frees the underlying Rust struct.
-//    * Thread A resumes, passing the already-read pointer value to Rust and triggering
+//    * Thread A resumes, passing the already-read handle value to Rust and triggering
 //      a use-after-free.
 //
 // One possible solution would be to use a `ReadWriteLock`, with each method call taking
@@ -110,7 +113,7 @@ inline fun <T : Disposable?, R> T.use(block: (T) -> R) =
 // [1] https://stackoverflow.com/questions/24376768/can-java-finalize-an-object-when-it-is-still-in-scope/24380219
 //
 abstract class FFIObject(
-    protected val pointer: Pointer
+    internal val uniffiHandle: Int
 ): Disposable, AutoCloseable {
 
     private val wasDestroyed = AtomicBoolean(false)
@@ -136,7 +139,7 @@ abstract class FFIObject(
         this.destroy()
     }
 
-    internal inline fun <R> callWithPointer(block: (ptr: Pointer) -> R): R {
+    internal inline fun <R> callWithHandle(block: (Int) -> R): R {
         // Check and increment the call counter, to keep the object alive.
         // This needs a compare-and-set retry loop in case of concurrent updates.
         do {
@@ -148,9 +151,9 @@ abstract class FFIObject(
                 throw IllegalStateException("${this.javaClass.simpleName} call counter would overflow")
             }
         } while (! this.callCounter.compareAndSet(c, c + 1L))
-        // Now we can safely do the method call without the pointer being freed concurrently.
+        // Now we can safely do the method call without the handle being freed concurrently.
         try {
-            return block(this.pointer)
+            return block(this.uniffiHandle)
         } finally {
             // This decrement always matches the increment we performed above.
             if (this.callCounter.decrementAndGet() == 0L) {

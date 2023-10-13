@@ -308,6 +308,9 @@ impl KotlinCodeOracle {
             FfiType::Int64 | FfiType::UInt64 => "Long".to_string(),
             FfiType::Float32 => "Float".to_string(),
             FfiType::Float64 => "Double".to_string(),
+            // Handles are technically UInts, but that doesn't work well with JNA, so let's call it
+            // an Int instead.  Either way they are opaque handles, so it doesn't matter much.
+            FfiType::Handle => "Int".to_string(),
             FfiType::RustArcPtr(_) => "Pointer".to_string(),
             FfiType::RustBuffer(maybe_suffix) => {
                 format!("RustBuffer{}", maybe_suffix.as_deref().unwrap_or_default())
