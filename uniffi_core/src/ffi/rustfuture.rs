@@ -12,7 +12,7 @@
 //!
 //! 0. At startup, register a [RustFutureContinuationCallback] by calling
 //!    rust_future_continuation_callback_set.
-//! 1. Call the scaffolding function to get a [RustFutureHandle]
+//! 1. Call the scaffolding function to get a [Handle] for the future.
 //! 2a. In a loop:
 //!   - Call [rust_future_poll]
 //!   - Suspend the function until the [rust_future_poll] continuation function is called
@@ -88,7 +88,7 @@ use std::{
 
 use once_cell::sync::OnceCell;
 
-use crate::{rust_call_with_out_status, FfiDefault, LowerReturn, RustCallStatus};
+use crate::{rust_call_with_out_status, FfiType, Handle, LowerReturn, RustCallStatus};
 
 /// Result code for [rust_future_poll].  This is passed to the continuation function.
 #[repr(i8)]
@@ -105,10 +105,6 @@ pub enum RustFuturePoll {
 /// The Rust side of things calls this when the foreign side should call [rust_future_poll] again
 /// to continue progress on the future.
 pub type RustFutureContinuationCallback = extern "C" fn(callback_data: *const (), RustFuturePoll);
-
-/// Opaque handle for a Rust future that's stored by the foreign language code
-#[repr(transparent)]
-pub struct RustFutureHandle(*const ());
 
 /// Stores the global continuation callback
 static RUST_FUTURE_CONTINUATION_CALLBACK_CELL: OnceCell<RustFutureContinuationCallback> =
@@ -133,11 +129,13 @@ fn call_continuation(data: *const (), poll_code: RustFuturePoll) {
 
 // === Public FFI API ===
 
-/// Create a new [RustFutureHandle]
+/// Create a new RustFuture and get a [Handle] to it.
+///
+/// This handle can be passed to the scaffolding poll/cancel/complete functions.
 ///
 /// For each exported async function, UniFFI will create a scaffolding function that uses this to
-/// create the [RustFutureHandle] to pass to the foreign code.
-pub fn rust_future_new<F, T, UT>(future: F, tag: UT) -> RustFutureHandle
+/// create the [Handle] to pass to the foreign code.
+pub fn rust_future_new<F, T, UT>(future: F, tag: UT) -> Handle
 where
     // F is the future type returned by the exported async function.  It needs to be Send + `static
     // since it will move between threads for an indeterminate amount of time as the foreign
@@ -153,11 +151,7 @@ where
     // Create a RustFuture and coerce to `Arc<dyn RustFutureFfi>`, which is what we use to
     // implement the FFI
     let future_ffi = RustFuture::new(future, tag) as Arc<dyn RustFutureFfi<T::ReturnType>>;
-    // Box the Arc, to convert the wide pointer into a normal sized pointer so that we can pass it
-    // to the foreign code.
-    let boxed_ffi = Box::new(future_ffi);
-    // We can now create a RustFutureHandle
-    RustFutureHandle(Box::into_raw(boxed_ffi) as *mut ())
+    T::ReturnType::future_handle_slab().insert_unchecked(future_ffi)
 }
 
 /// Poll a Rust future
@@ -168,10 +162,9 @@ where
 ///
 /// # Safety
 ///
-/// The [RustFutureHandle] must not previously have been passed to [rust_future_free]
-pub unsafe fn rust_future_poll<ReturnType>(handle: RustFutureHandle, data: *const ()) {
-    let future = &*(handle.0 as *mut Arc<dyn RustFutureFfi<ReturnType>>);
-    future.clone().ffi_poll(data)
+/// The [Handle] must not previously have been passed to [rust_future_free]
+pub unsafe fn rust_future_poll<ReturnType: FfiType>(handle: Handle, data: *const ()) {
+    ReturnType::future_handle_slab().get_unchecked(handle).ffi_poll(data)
 }
 
 /// Cancel a Rust future
@@ -498,7 +491,7 @@ where
 /// x86-64 machine . By parametrizing on `T::ReturnType` we can instead monomorphize by hand and
 /// only create those functions for each of the 13 possible FFI return types.
 #[doc(hidden)]
-trait RustFutureFfi<ReturnType> {
+pub trait RustFutureFfi<ReturnType> : Send + Sync {
     fn ffi_poll(self: Arc<Self>, data: *const ());
     fn ffi_cancel(&self);
     fn ffi_complete(&self, call_status: &mut RustCallStatus) -> ReturnType;

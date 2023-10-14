@@ -5,7 +5,7 @@
 //! Types that can cross the FFI boundary.
 
 pub mod callbackinterface;
-pub mod ffidefault;
+pub mod ffitype;
 pub mod foreignbytes;
 pub mod foreigncallbacks;
 pub mod foreignexecutor;
@@ -15,7 +15,7 @@ pub mod rustfuture;
 pub mod slab;
 
 pub use callbackinterface::*;
-pub use ffidefault::FfiDefault;
+pub use ffitype::FfiType;
 pub use foreignbytes::*;
 pub use foreigncallbacks::*;
 pub use foreignexecutor::*;

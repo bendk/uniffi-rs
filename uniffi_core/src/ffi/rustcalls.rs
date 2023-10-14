@@ -11,7 +11,7 @@
 //!    - Adapting the result of `Return::lower_return()` into either a return value or an
 //!      exception
 
-use crate::{FfiDefault, Lower, RustBuffer, UniFfiTag};
+use crate::{FfiType, Lower, RustBuffer, UniFfiTag};
 use std::mem::MaybeUninit;
 use std::panic;
 
@@ -121,7 +121,7 @@ pub enum RustCallStatusCode {
 pub fn rust_call<F, R>(out_status: &mut RustCallStatus, callback: F) -> R
 where
     F: panic::UnwindSafe + FnOnce() -> Result<R, RustBuffer>,
-    R: FfiDefault,
+    R: FfiType,
 {
     rust_call_with_out_status(out_status, callback).unwrap_or_else(R::ffi_default)
 }

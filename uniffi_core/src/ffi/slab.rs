@@ -22,15 +22,13 @@
 
 use std::{fmt, sync::Mutex};
 
-use crate::FfiDefault;
-
 /// Handle for a value stored in the slab
 ///
 /// * The first 30 bits are used for indexes into the `entries` table and special values
 ///   - The first 1,000,000,000 values are used for indexes in the `entries` table.
 ///   - The next values are reserved for special cases (see `rust_future.rs` for an example).
 /// * The last 2 bits are used for the tag
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Handle(u32);
 
@@ -41,12 +39,6 @@ impl Handle {
 
     pub fn as_u32(&self) -> u32 {
         self.0
-    }
-}
-
-impl FfiDefault for Handle {
-    fn ffi_default() -> Self {
-        Self(0)
     }
 }
 
