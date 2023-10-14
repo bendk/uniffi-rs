@@ -198,7 +198,7 @@ where
 /// These traits should not be used directly, only in generated code, and the generated code should
 /// have fixture tests to test that everything works correctly together.
 pub unsafe trait Lift<UT>: Sized {
-    type FfiType : FfiType;
+    type FfiType: FfiType;
 
     fn try_lift(v: Self::FfiType) -> Result<Self>;
 

@@ -164,7 +164,9 @@ where
 ///
 /// The [Handle] must not previously have been passed to [rust_future_free]
 pub unsafe fn rust_future_poll<ReturnType: FfiType>(handle: Handle, data: *const ()) {
-    ReturnType::future_handle_slab().get_unchecked(handle).ffi_poll(data)
+    ReturnType::future_handle_slab()
+        .get_clone_unchecked(handle)
+        .ffi_poll(data)
 }
 
 /// Cancel a Rust future
@@ -176,10 +178,11 @@ pub unsafe fn rust_future_poll<ReturnType: FfiType>(handle: Handle, data: *const
 ///
 /// # Safety
 ///
-/// The [RustFutureHandle] must not previously have been passed to [rust_future_free]
-pub unsafe fn rust_future_cancel<ReturnType>(handle: RustFutureHandle) {
-    let future = &*(handle.0 as *mut Arc<dyn RustFutureFfi<ReturnType>>);
-    future.clone().ffi_cancel()
+/// The [Handle] must not previously have been passed to [rust_future_free]
+pub unsafe fn rust_future_cancel<ReturnType: FfiType>(handle: Handle) {
+    ReturnType::future_handle_slab()
+        .get_clone_unchecked(handle)
+        .ffi_cancel()
 }
 
 /// Complete a Rust future
@@ -189,15 +192,16 @@ pub unsafe fn rust_future_cancel<ReturnType>(handle: RustFutureHandle) {
 ///
 /// # Safety
 ///
-/// - The [RustFutureHandle] must not previously have been passed to [rust_future_free]
+/// - The [Handle] must not previously have been passed to [rust_future_free]
 /// - The `T` param must correctly correspond to the [rust_future_new] call.  It must
 ///   be `<Output as LowerReturn<UT>>::ReturnType`
-pub unsafe fn rust_future_complete<ReturnType>(
-    handle: RustFutureHandle,
+pub unsafe fn rust_future_complete<ReturnType: FfiType>(
+    handle: Handle,
     out_status: &mut RustCallStatus,
 ) -> ReturnType {
-    let future = &*(handle.0 as *mut Arc<dyn RustFutureFfi<ReturnType>>);
-    future.ffi_complete(out_status)
+    ReturnType::future_handle_slab()
+        .get_clone_unchecked(handle)
+        .ffi_complete(out_status)
 }
 
 /// Free a Rust future, dropping the strong reference and releasing all references held by the
@@ -205,10 +209,9 @@ pub unsafe fn rust_future_complete<ReturnType>(
 ///
 /// # Safety
 ///
-/// The [RustFutureHandle] must not previously have been passed to [rust_future_free]
-pub unsafe fn rust_future_free<ReturnType>(handle: RustFutureHandle) {
-    let future = Box::from_raw(handle.0 as *mut Arc<dyn RustFutureFfi<ReturnType>>);
-    future.ffi_free()
+/// The [Handle] must not previously have been passed to [rust_future_free]
+pub unsafe fn rust_future_free<ReturnType: FfiType>(handle: Handle) {
+    ReturnType::future_handle_slab().remove_unchecked(handle);
 }
 
 /// Thread-safe storage for [RustFutureContinuationCallback] data
@@ -491,7 +494,7 @@ where
 /// x86-64 machine . By parametrizing on `T::ReturnType` we can instead monomorphize by hand and
 /// only create those functions for each of the 13 possible FFI return types.
 #[doc(hidden)]
-pub trait RustFutureFfi<ReturnType> : Send + Sync {
+pub trait RustFutureFfi<ReturnType>: Send + Sync {
     fn ffi_poll(self: Arc<Self>, data: *const ());
     fn ffi_cancel(&self);
     fn ffi_complete(&self, call_status: &mut RustCallStatus) -> ReturnType;
