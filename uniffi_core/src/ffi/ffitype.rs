@@ -15,7 +15,7 @@ use paste::paste;
 
 use crate::{RustFutureFfi, Slab};
 
-pub trait FfiType {
+pub trait FfiType: 'static {
     /// Default/placeholder value
     ///
     /// The main use for this is when this type is passed as an out pointer.
@@ -70,4 +70,3 @@ ffi_type! {
     (crate::RustBuffer) => (rustbuffer, crate::RustBuffer::default()),
     (crate::ForeignExecutorHandle) => (foreign_executor, crate::ForeignExecutorHandle(std::ptr::null())),
 }
-
