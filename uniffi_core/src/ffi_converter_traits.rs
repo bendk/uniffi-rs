@@ -51,7 +51,7 @@ use std::{borrow::Borrow, sync::Arc};
 use anyhow::bail;
 use bytes::Buf;
 
-use crate::{FfiDefault, MetadataBuffer, Result, RustBuffer, UnexpectedUniFFICallbackError};
+use crate::{FfiType, MetadataBuffer, Result, RustBuffer, UnexpectedUniFFICallbackError};
 
 /// Generalized FFI conversions
 ///
@@ -78,7 +78,7 @@ pub unsafe trait FfiConverter<UT>: Sized {
     /// serialization is simpler and safer as a starting point.
     ///
     /// If a type implements multiple FFI traits, `FfiType` must be the same for all of them.
-    type FfiType: FfiDefault;
+    type FfiType: FfiType;
 
     /// Lower a rust value of the target type, into an FFI value of type Self::FfiType.
     ///
@@ -147,7 +147,7 @@ pub unsafe trait FfiConverter<UT>: Sized {
 /// These traits should not be used directly, only in generated code, and the generated code should
 /// have fixture tests to test that everything works correctly together.
 pub unsafe trait FfiConverterArc<UT>: Send + Sync {
-    type FfiType: FfiDefault;
+    type FfiType: FfiType;
 
     fn lower(obj: Arc<Self>) -> Self::FfiType;
     fn try_lift(v: Self::FfiType) -> Result<Arc<Self>>;
@@ -198,7 +198,7 @@ where
 /// These traits should not be used directly, only in generated code, and the generated code should
 /// have fixture tests to test that everything works correctly together.
 pub unsafe trait Lift<UT>: Sized {
-    type FfiType;
+    type FfiType : FfiType;
 
     fn try_lift(v: Self::FfiType) -> Result<Self>;
 
@@ -234,7 +234,7 @@ pub unsafe trait Lift<UT>: Sized {
 /// These traits should not be used directly, only in generated code, and the generated code should
 /// have fixture tests to test that everything works correctly together.
 pub unsafe trait Lower<UT>: Sized {
-    type FfiType: FfiDefault;
+    type FfiType: FfiType;
 
     fn lower(obj: Self) -> Self::FfiType;
 
@@ -266,7 +266,7 @@ pub unsafe trait LowerReturn<UT>: Sized {
     /// The type that should be returned by scaffolding functions for this type.
     ///
     /// When derived, it's the same as `FfiType`.
-    type ReturnType: FfiDefault;
+    type ReturnType: FfiType;
 
     /// Lower this value for scaffolding function return
     ///

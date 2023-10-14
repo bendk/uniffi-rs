@@ -85,7 +85,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 ///   detected until at least 256 inserts are performed after the free.
 /// * The last 16 bits are intentionally unset, so that these can be easily used on languages like
 ///   JS that don't support full 64-bit integers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct Handle(u64);
 
