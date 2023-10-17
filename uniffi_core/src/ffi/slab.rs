@@ -26,12 +26,18 @@
 //! * Handles have a bit to differentiate between foreign-allocated handles and rust-allocated ones.
 //!   The trait interface code uses this to differentiate between Rust-implemented and foreign-implemented traits.
 
-use std::{fmt, sync::RwLock};
+use std::{
+    cell::UnsafeCell,
+    fmt,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
+use append_only_vec::AppendOnlyVec;
 use const_random::const_random;
 
-// This code assumes that usize is at least as wide as u32
+// This code assumes that usize is 32 or 64 bits
 static_assertions::const_assert!(std::mem::size_of::<usize>() >= std::mem::size_of::<u32>());
+static_assertions::const_assert!(std::mem::size_of::<usize>() <= std::mem::size_of::<u64>());
 
 /// Slab error type
 ///
@@ -43,7 +49,9 @@ pub enum Error {
     ForeignHandle,
     UseAfterFree(&'static str),
     OverCapacity,
-    Other(&'static str),
+    Vacant,
+    Occupied,
+    Other(String),
 }
 
 impl fmt::Display for Error {
@@ -53,6 +61,8 @@ impl fmt::Display for Error {
             Self::SlabIdMismatch => write!(f, "Slab id mismatch"),
             Self::ForeignHandle => write!(f, "Handle belongs to a foreign slab"),
             Self::OverCapacity => write!(f, "Slab capacity exceeded"),
+            Self::Vacant => write!(f, "Entry unexpectedly vacant"),
+            Self::Occupied => write!(f, "Entry unexpectedly occupied"),
             Self::Other(msg) => write!(f, "Slab internal error: {msg}"),
         }
     }
@@ -80,12 +90,25 @@ pub type Result<T> = std::result::Result<T, Error>;
 pub struct Handle(u64);
 
 impl Handle {
+    // Create a new handle
+    //
+    // `metadata` contains bits for the slab id and generation counter.  Bits 0..32 and 48..64 should
+    // always be unset.
+    // `index` contains the index of the entry, which must fit in 32 bits.
+    const fn new(metadata: u64, index: usize) -> Self {
+        Self(metadata | index as u64)
+    }
+
     pub const fn from_raw(val: u64) -> Self {
         Self(val)
     }
 
     pub const fn as_raw(&self) -> u64 {
         self.0
+    }
+
+    fn index(&self) -> usize {
+        (self.0 & INDEX_MASK) as usize
     }
 
     pub fn is_from_rust(&self) -> bool {
@@ -100,11 +123,13 @@ impl Handle {
 // 4 billion entries seems like plenty.  Starting special values at 4,000,000,000, makes them
 // easier to recognized when printed out.
 const MAX_ENTRIES: u64 = 4_000_000_000;
-const END_OF_LIST: usize = usize::MAX;
+const END_OF_LIST: u64 = u32::MAX as u64;
 // Bit masks to isolate one part of the handle.
 // Unit values are used to increment one segment of the handle.
 // In general, we avoid bit shifts by updating the u64 value directly.
 const INDEX_MASK: u64 = 0x0000_FFFF_FFFF;
+const HANDLE_MASK: u64 = 0xFFFF_FFFF_FFFF;
+const HANDLE_METADATA_MASK: u64 = 0xFFFF_0000_0000;
 const SLAB_ID_MASK: u64 = 0x00FF_0000_0000;
 const SLAB_ID_UNIT: u64 = 0x0002_0000_0000;
 const FOREIGN_BIT: u64 = 0x0001_0000_0000;
@@ -118,21 +143,241 @@ const GENERATION_UNIT: u64 = 0x0100_0000_0000;
 enum Entry<T: Clone> {
     // Vacant entry. These form a kind of linked-list in the EntryList.  Each inner value is the
     // index of the next vacant entry.
-    Vacant { next: usize },
-    Occupied { generation: u64, value: T },
+    Vacant { next: u64 },
+    Occupied { value: T },
+}
+
+/// Slab entry protected with some safeguards.
+///
+/// Each entry is protected by a simple RwLock that should never be contended.  If one thread is
+/// trying to read the entry and another is trying to write it, this indicates some sort of
+/// use-after-free bug (for example calling `get()` and `remove()` at the same time)
+///
+/// `LockedEntry` also stores the generation counter and the slab id for occupied entries and checks
+/// those while it's checking the lock.
+struct LockedEntry<T: Clone> {
+    // The upper 32 bits matches the upper 32 bits of the handle for this entry (the generation
+    // counter and slab id).
+    //
+    // The lower 31 bits are used for the read counter.
+    // The 32nd bit is used for the write lock.
+    //
+    // Note: This is before `state` in the hope that this will fall in the highest
+    // 32 bits of an aligned 64-bit value and Rust/LLVM can optimize some things based on that.
+    state: AtomicU64,
+    entry: UnsafeCell<Entry<T>>,
+}
+
+impl<T: Clone> LockedEntry<T> {
+    const WRITE_LOCK_BIT: u64 = 0x8000_0000;
+
+    /// Make a new, occupied entry
+    fn new(slab_id: u64, value: T) -> Self {
+        Self {
+            state: AtomicU64::new(slab_id),
+            entry: UnsafeCell::new(Entry::Occupied { value }),
+        }
+    }
+
+    // Call a function that reads from the current entry with the read lock
+    fn read<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(u64, &Entry<T>) -> Result<R>,
+    {
+        // Increment the read count and check that there are no active writers
+        let old_state = self.state.fetch_add(1, Ordering::Acquire);
+        if (old_state & Self::WRITE_LOCK_BIT) != 0 {
+            self.state.fetch_sub(1, Ordering::Relaxed);
+            return Err(Error::UseAfterFree(
+                "entry write locked while trying to read",
+            ));
+        }
+
+        // Safety:
+        //
+        // We have incremented the read counter while the write lock bit was unset so we know there
+        // are no current writers. If write() is called before we're done, it will see the reader
+        // count as nonzero and return an error rather than allowing the update to continue.
+        let entry = unsafe { &*self.entry.get() };
+        let result = f(old_state, entry);
+        self.state.fetch_sub(1, Ordering::Release);
+        result
+    }
+
+    // Call a function that updates the current entry with the write lock
+    fn write<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(u64, &mut Entry<T>) -> Result<R>,
+    {
+        // Set the write lock bit and check that there are no active readers or writers
+        let old_state = self.state.fetch_or(Self::WRITE_LOCK_BIT, Ordering::Acquire);
+        if (old_state & INDEX_MASK) != 0 {
+            if (old_state & Self::WRITE_LOCK_BIT) != 0 {
+                return Err(Error::UseAfterFree(
+                    "entry write locked while trying to write",
+                ));
+            } else {
+                // We were the thread that set the write lock bit, so we need to unset it
+                self.state
+                    .fetch_and(!Self::WRITE_LOCK_BIT, Ordering::Relaxed);
+                return Err(Error::UseAfterFree(
+                    "entry read locked while trying to write",
+                ));
+            }
+        }
+
+        // Safety: We have set the write lock bit while all other bits were unset so we know there
+        // are no current readers or writers. If read() or write() is called before we're done, it
+        // will see the writer bit set and return an error rather than allowing the operation to
+        // continue.
+        let entry = unsafe { &mut *self.entry.get() };
+        let result = f(old_state, entry);
+        // Unset the write lock bit
+        self.state
+            .fetch_and(!Self::WRITE_LOCK_BIT, Ordering::Release);
+        result
+    }
+
+    fn check_handle_against_state(&self, handle: Handle, state: u64) -> Result<()> {
+        let raw_handle = handle.as_raw();
+        if raw_handle & HANDLE_METADATA_MASK != state & HANDLE_METADATA_MASK {
+            if raw_handle & FOREIGN_BIT != 0 {
+                Err(Error::ForeignHandle)
+            } else if raw_handle & SLAB_ID_MASK != state & SLAB_ID_MASK {
+                Err(Error::SlabIdMismatch)
+            } else if raw_handle & GENERATION_MASK != state & GENERATION_MASK {
+                Err(Error::UseAfterFree("generation mismatch"))
+            } else {
+                Err(Error::Other(format!(
+                    "handle/state mismatch, but we failed to detect it: {state}, {raw_handle}"
+                )))
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Get the next value from a vacant entry
+    fn get_next(&self) -> Result<u64> {
+        self.read(|_, entry| match entry {
+            Entry::Vacant { next } => Ok(*next),
+            Entry::Occupied { .. } => Err(Error::Vacant),
+        })
+    }
+
+    /// Get the next value from a vacant entry
+    fn set_next(&self, new_next: u64) -> Result<()> {
+        self.write(|_, entry| match entry {
+            Entry::Vacant { next } => {
+                *next = new_next;
+                Ok(())
+            }
+            Entry::Occupied { .. } => Err(Error::Vacant),
+        })
+    }
+
+    /// Get a cloned value from an occupied entry.
+    fn get_clone(&self, handle: Handle) -> Result<T> {
+        self.read(|state, entry| {
+            self.check_handle_against_state(handle, state)?;
+            match entry {
+                Entry::Vacant { .. } => Err(Error::UseAfterFree("vacant entry")),
+                Entry::Occupied { value } => Ok(value.clone()),
+            }
+        })
+    }
+
+    /// Insert a value into a vacant entry, transitioning it to occupied.
+    ///
+    /// Returns the handle metadata bits (the slab ID, and generation counter)
+    fn insert(&self, value: T) -> Result<u64> {
+        self.write(|_, entry| {
+            if let Entry::Occupied { .. } = entry {
+                return Err(Error::Occupied);
+            }
+            *entry = Entry::Occupied { value };
+            // increment the generation counter portion of `self.state`
+            self.state.fetch_add(GENERATION_UNIT, Ordering::Relaxed);
+            self.state.fetch_and(HANDLE_MASK, Ordering::Relaxed);
+            Ok(self.state.load(Ordering::Relaxed) & HANDLE_METADATA_MASK)
+        })
+    }
+
+    /// Take the value of an entry, transitioning it from occupied to vacant
+    ///
+    /// Sets the `next` value to `END_OF_LIST`.  Use `set_next` to update this.
+    fn take(&self, handle: Handle) -> Result<T> {
+        self.write(|state, entry| {
+            self.check_handle_against_state(handle, state)?;
+            if let Entry::Vacant { .. } = entry {
+                return Err(Error::UseAfterFree("vacant entry"));
+            }
+            let value = match std::mem::replace(entry, Entry::Vacant { next: END_OF_LIST }) {
+                Entry::Occupied { value } => value,
+                Entry::Vacant { .. } => unreachable!(),
+            };
+            Ok(value)
+        })
+    }
+}
+
+// Index of the next vacant entry in the free list for a Slab.
+//
+// The bottom 32 bits are the index of the entry.
+// The top 32 bits are a generation counter that we use when atomically updating this to avoid
+// the ABA problem.
+pub struct Next(AtomicU64);
+
+impl Next {
+    const INDEX_MASK: u64 = 0x0000_FFFF_FFFF;
+    const GENERATION_MASK: u64 = 0xFFFF_FFFF_0000_0000;
+    const GENERATION_UNIT: u64 = 0x0000_0001_0000_0000;
+
+    const fn new_eol() -> Self {
+        Self(AtomicU64::new(END_OF_LIST as u64))
+    }
+
+    // Get the current index and a way to modify it
+    //
+    // Returns the current index and a token to pass to `try_update()` to update the index
+    fn get(&self) -> (usize, u64) {
+        let value = self.0.load(Ordering::Relaxed);
+        ((value & Self::INDEX_MASK) as usize, value)
+    }
+
+    // Try to update the index
+    //
+    // This will only work if the value has not changed since the call to `get()`
+    // Returns true if the update was successful
+    fn try_update(&self, index: usize, token_from_get: u64) -> bool {
+        #[cfg(test)]
+        cas_loop_testing::wait();
+
+        let new_value =
+            ((token_from_get & Self::GENERATION_MASK) + Self::GENERATION_UNIT) | index as u64;
+        self.0
+            .compare_exchange_weak(
+                token_from_get,
+                new_value,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            )
+            .is_ok()
+    }
 }
 
 /// Allocates handles that represent stored values and can be shared by the foreign code
 pub struct Slab<T: Clone> {
     slab_id: u64,
-    inner: RwLock<SlabInner<T>>,
-}
-
-#[derive(Debug)]
-struct SlabInner<T: Clone> {
-    generation: u64,
-    next: usize,
-    entries: Vec<Entry<T>>,
+    // Use an append-only vec, which has the nice property that we can push to it with a shared
+    // reference
+    entries: AppendOnlyVec<LockedEntry<T>>,
+    // Next entry in the free list.
+    //
+    // The bottom 32 bits are the index of the entry.
+    // The top 32 bits are a generation counter that we use when atomically updating this to avoid
+    // the ABA problem.
+    next: Next,
 }
 
 impl<T: Clone> Slab<T> {
@@ -143,124 +388,68 @@ impl<T: Clone> Slab<T> {
     pub const fn new_with_id(slab_id: u8) -> Self {
         Self {
             slab_id: (slab_id as u64 * SLAB_ID_UNIT) & SLAB_ID_MASK,
-            inner: RwLock::new(SlabInner {
-                generation: 0,
-                next: END_OF_LIST,
-                entries: vec![],
-            }),
+            entries: AppendOnlyVec::new(),
+            next: Next::new_eol(),
         }
     }
 
-    fn with_read_lock<F, R>(&self, operation: F) -> R
-    where
-        F: FnOnce(&SlabInner<T>) -> R,
-    {
-        let guard = self.inner.read().unwrap();
-        operation(&*guard)
+    fn get_entry(&self, handle: Handle) -> Result<&LockedEntry<T>> {
+        let index = handle.index();
+        if index < self.entries.len() {
+            Ok(&self.entries[index])
+        } else if handle.as_raw() & SLAB_ID_MASK != self.slab_id {
+            Err(Error::SlabIdMismatch)
+        } else {
+            Err(Error::Other("Index out of bounds".to_owned()))
+        }
     }
 
-    fn with_write_lock<F, R>(&self, operation: F) -> R
-    where
-        F: FnOnce(&mut SlabInner<T>) -> R,
-    {
-        let mut guard = self.inner.write().unwrap();
-        operation(&mut *guard)
-    }
-
-    // Lookup a handle
-    //
-    // This inputs a handle, validates it's tag, generation counter, etc.
-    // Returns an index that points to an allocated entry.
-    fn lookup(&self, inner: &SlabInner<T>, handle: Handle) -> Result<usize> {
-        if handle.is_foreign() {
-            return Err(Error::ForeignHandle);
-        }
-        let raw = handle.as_raw();
-        let index = (raw & INDEX_MASK) as usize;
-        let handle_slab_id = raw & SLAB_ID_MASK;
-        let handle_generation = raw & GENERATION_MASK;
-
-        if handle_slab_id != self.slab_id {
-            return Err(Error::SlabIdMismatch);
-        }
-        let entry = &inner.entries[index];
-        match entry {
-            Entry::Vacant { .. } => Err(Error::UseAfterFree("vacant")),
-            Entry::Occupied { generation, .. } => {
-                if *generation != handle_generation {
-                    Err(Error::UseAfterFree("generation mismatch"))
-                } else {
-                    Ok(index)
+    /// Insert a new item into the Slab
+    pub fn insert(&self, value: T) -> Result<Handle> {
+        // CAS loop to ensure the operation is atomic
+        loop {
+            let (index, token) = self.next.get();
+            if index == END_OF_LIST as usize {
+                // Next is pointing at END_OF_LIST, push a new entry
+                let index = self.entries.push(LockedEntry::new(self.slab_id, value));
+                // Note we can use `slab_id` as the handle metadata since we know that the
+                // generation counter is 0.
+                return Ok(Handle::new(self.slab_id, index));
+            } else {
+                // Next is pointing at some index, try to atomically update `next` to point to
+                // the second item in the free list.  If that fails, then continue with the CAS
+                // loop.
+                let next2 = self.entries[index].get_next()?;
+                if self.next.try_update(next2 as usize, token) {
+                    let metadata = self.entries[index].insert(value)?;
+                    return Ok(Handle::new(metadata, index));
                 }
             }
         }
     }
 
-    // Create a handle from an index
-    fn make_handle(&self, generation: u64, index: usize) -> Handle {
-        Handle(index as u64 | generation | self.slab_id)
-    }
-
-    /// Find a vacant entry to insert a new item in
-    ///
-    /// This removes it from the vacancy list and returns the index
-    fn get_vacant_to_use<'a>(&self, inner: &'a mut SlabInner<T>) -> Result<usize> {
-        match inner.next {
-            END_OF_LIST => {
-                // No vacant entries, push a new entry and use that
-                inner.entries.push(Entry::Vacant { next: END_OF_LIST });
-                Ok(inner.entries.len() - 1)
-            }
-            old_next => {
-                // There's at least one vacant entry, pop it off the list
-                match inner.entries[old_next as usize] {
-                    Entry::Occupied { .. } => return Err(Error::Other("self.next is occupied")),
-                    Entry::Vacant { next } => {
-                        inner.next = next;
-                    }
-                };
-                Ok(old_next as usize)
-            }
-        }
-    }
-
-    /// Insert a new item into the Slab and get a Handle to access it with
-    pub fn insert(&self, value: T) -> Result<Handle> {
-        self.with_write_lock(move |inner| {
-            let idx = self.get_vacant_to_use(inner)?;
-            let generation = inner.generation;
-            inner.generation = (inner.generation + GENERATION_UNIT) & GENERATION_MASK;
-            inner.entries[idx] = Entry::Occupied { value, generation };
-            Ok(self.make_handle(generation, idx))
-        })
-    }
-
     /// Get a cloned value from a handle
     pub fn get_clone(&self, handle: Handle) -> Result<T> {
-        self.with_read_lock(|inner| {
-            let idx = self.lookup(inner, handle)?;
-            match &inner.entries[idx] {
-                Entry::Occupied { value, .. } => Ok(value.clone()),
-                // lookup ensures the entry is occupied
-                Entry::Vacant { .. } => unreachable!(),
-            }
-        })
+        self.get_entry(handle)?.get_clone(handle)
     }
 
     // Remove an item from the slab, returning the original value
     pub fn remove(&self, handle: Handle) -> Result<T> {
-        self.with_write_lock(move |inner| {
-            let idx = self.lookup(inner, handle)?;
-            // Push the entry to the head of the vacant list
-            let old_value =
-                std::mem::replace(&mut inner.entries[idx], Entry::Vacant { next: inner.next });
-            inner.next = idx;
-            match old_value {
-                Entry::Occupied { value, .. } => Ok(value),
-                // lookup ensures the entry is occupied
-                Entry::Vacant { .. } => unreachable!(),
+        // Take the occupied value, leaving a vacant entry that we will fill out.
+        //
+        // Note: If the `set_next()` call below fails, we'll be left with a vacant entry that's not
+        // part of the free list, and therefore will never be re-used.  That's not great, but not
+        // disastrous either.
+        let index = handle.index();
+        let value = self.get_entry(handle)?.take(handle)?;
+        // CAS loop to ensure the operation is atomic
+        loop {
+            let (current_next, token) = self.next.get();
+            self.entries[index].set_next(current_next as u64)?;
+            if self.next.try_update(index, token) {
+                return Ok(value);
             }
-        })
+        }
     }
 
     pub fn insert_or_panic(&self, value: T) -> Handle {
@@ -287,38 +476,103 @@ impl<T: Clone> Slab<T> {
     }
 }
 
+unsafe impl<T: Clone> Send for Slab<T> { }
+unsafe impl<T: Clone> Sync for Slab<T> { }
+
+// Simple mechanism to test the CAS loops.  This allows us to block threads right before the
+// `compare_exchange_weak` call, then unblock threads in a controlled manner.
+#[cfg(test)]
+mod cas_loop_testing {
+    use std::{
+        collections::HashMap,
+        sync::{Condvar, Mutex},
+        thread::{self, ThreadId},
+    };
+    use once_cell::sync::OnceCell;
+
+    enum BlockType {
+        Block,
+        RunOnceThenBlock,
+    }
+
+    static MAP: OnceCell<Mutex<HashMap<ThreadId, BlockType>>> = OnceCell::new();
+    static CONDITION: Condvar = Condvar::new();
+
+    fn map() -> &'static Mutex<HashMap<ThreadId, BlockType>> {
+        MAP.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    pub fn wait() {
+        let mut map = map().lock().unwrap();
+        loop {
+            match map.get_mut(&thread::current().id()) {
+                None => break,
+                Some(block_type) => match block_type {
+                    BlockType::RunOnceThenBlock => {
+                        *block_type = BlockType::Block;
+                        break;
+                    }
+                    _ => ()
+                }
+            }
+            map = CONDITION.wait(map).unwrap();
+        }
+    }
+
+    pub fn block(thread_id: ThreadId) {
+        map().lock().unwrap().insert(thread_id, BlockType::Block);
+    }
+
+    pub fn unblock_once(thread_id: ThreadId) {
+        map().lock().unwrap().insert(thread_id, BlockType::RunOnceThenBlock);
+        CONDITION.notify_all()
+    }
+
+    pub fn unblock(thread_id: ThreadId) {
+        map().lock().unwrap().remove(&thread_id);
+        CONDITION.notify_all()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
 
-    fn check_slab_size<T: Clone>(slab: &Slab<T>, occupied_count: usize, vec_size: usize) {
-        let inner = slab.inner.read().unwrap();
-        assert_eq!(
-            inner
-                .entries
-                .iter()
-                .filter(|e| matches!(e, Entry::Occupied { .. }))
-                .count(),
-            occupied_count
-        );
-        assert_eq!(inner.entries.len(), vec_size);
+    #[test]
+    fn test_entry_locking() {
+        let entry = LockedEntry::<Arc<&str>>::new(0, Arc::new("Hello"));
+        entry
+            .read(|_, _| {
+                // A second reader is allowed
+                assert!(entry.read(|_, _| { Ok(()) }).is_ok());
+                // But a writer is not
+                assert!(entry.write(|_, _| { Ok(()) }).is_err());
+                Ok(())
+            })
+            .unwrap();
+
+        entry
+            .write(|_, _| {
+                // A reader is not allowed while the entry is being written
+                assert!(entry.read(|_, _| { Ok(()) }).is_err());
+                // Neither is a writer
+                assert!(entry.write(|_, _| { Ok(()) }).is_err());
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
     fn test_simple_usage() {
         let slab = Slab::new();
-        check_slab_size(&slab, 0, 0);
         let handle1 = slab.insert(Arc::new("Hello")).unwrap();
-        check_slab_size(&slab, 1, 1);
         let handle2 = slab.insert(Arc::new("Goodbye")).unwrap();
-        check_slab_size(&slab, 2, 2);
+        assert_eq!(slab.entries.len(), 2);
         assert_eq!(*slab.get_clone(handle1).unwrap(), "Hello");
         slab.remove(handle1).unwrap();
-        check_slab_size(&slab, 1, 2);
         assert_eq!(*slab.get_clone(handle2).unwrap(), "Goodbye");
         slab.remove(handle2).unwrap();
-        check_slab_size(&slab, 0, 2);
     }
 
     #[test]
@@ -457,6 +711,60 @@ mod stress_tests {
                         .join("\n")
                 )
             });
+        }
+
+        // Test the CAS loops of the `Next` type
+        //
+        // We create 4 threads that each perform an operation "simultaneously", meaning:
+        //   * Each thread runs until after the read, before the `compare_exchange_weak`.
+        //   * Unblock first blocked thread, allowing `compare_exchange_weak` to succeed.
+        //   * Unblock the remaining threads for one more loop.  These will block again before
+        //     `compare_exchange_weak` and we repeat the loop with one less thread.
+        #[test]
+        fn test_slab_threading(all_operations in vec(vec(operation(), 5), 0..100)) {
+            let slab = Slab::new();
+            let mut send_errors = vec![];
+            thread::scope(|scope| {
+                let (senders, handles): (Vec<_>, Vec<_>) = (0..4).into_iter().map(|_| {
+                    let slab = &slab;
+                    let (sender, receiever) = channel::<Option<Operation>>();
+                    let handle = scope.spawn(move || {
+                        let mut tester = SlabTester::new(slab);
+                        for operation in receiever {
+                            match operation {
+                                None => return,
+                                Some(operation) => tester.run(operation),
+                            };
+                        }
+                        tester.check();
+                    });
+                    (sender, handle)
+                })
+                .unzip();
+
+                for operations in all_operations {
+                    for thread in handles.iter() {
+                        cas_loop_testing::block(thread.thread().id());
+                    }
+                    for (sender, operation) in zip(senders.iter(), operations) {
+                        if let Err(e) = sender.send(Some(operation)) {
+                            send_errors.push(e.to_string())
+                        }
+                    }
+                    for i in 0..handles.len() {
+                        cas_loop_testing::unblock(handles[i].thread().id());
+                        for j in (i + 1)..handles.len() {
+                            cas_loop_testing::unblock_once(handles[j].thread().id());
+                        }
+                    }
+                }
+                for sender in senders.iter() {
+                    if let Err(e) = sender.send(None) {
+                        send_errors.push(e.to_string())
+                    }
+                }
+            });
+            assert_eq!(send_errors, Vec::<String>::new());
         }
     }
 }
