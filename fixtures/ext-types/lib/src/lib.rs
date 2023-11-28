@@ -3,7 +3,7 @@ use ext_types_external_crate::{ExternalCrateDictionary, ExternalCrateInterface};
 use ext_types_guid::Guid;
 use std::sync::Arc;
 use uniffi_one::{
-    UniffiOneEnum, UniffiOneInterface, UniffiOneProcMacroType, UniffiOneTrait, UniffiOneType,
+    UniffiOneEnum, UniffiOneEnum2, UniffiOneInterface, UniffiOneProcMacroType, UniffiOneTrait, UniffiOneType,
     UniffiOneUDLTrait,
 };
 use uniffi_sublib::SubLibType;

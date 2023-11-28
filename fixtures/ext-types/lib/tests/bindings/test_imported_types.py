@@ -56,6 +56,9 @@ class TestIt(unittest.TestCase):
         self.assertEqual([e], get_uniffi_one_enums([e]))
         self.assertEqual([e, None], get_maybe_uniffi_one_enums([e, None]))
 
+    def test_uniffi_one_enum2_defined(self):
+        self.assertNotEqual(UniffiOneEnum2.THREE, UniffiOneEnum2.FOUR)
+
     def test_external_crate_types(self):
         ct = get_combined_type(None)
         self.assertEqual(ct.ecd.sval, "ecd");

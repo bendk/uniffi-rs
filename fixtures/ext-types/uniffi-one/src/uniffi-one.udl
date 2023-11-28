@@ -9,6 +9,11 @@ enum UniffiOneEnum {
     "Two",
 };
 
+enum UniffiOneEnum2 {
+    "Three",
+    "Four",
+};
+
 interface UniffiOneInterface {
     constructor();
 

@@ -9,6 +9,11 @@ pub enum UniffiOneEnum {
     Two,
 }
 
+pub enum UniffiOneEnum2 {
+    Three,
+    Four,
+}
+
 #[derive(uniffi::Record)]
 pub struct UniffiOneProcMacroType {
     pub sval: String,

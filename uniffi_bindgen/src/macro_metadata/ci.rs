@@ -137,6 +137,15 @@ fn add_item_to_ci(iface: &mut ComponentInterface, item: Metadata) -> anyhow::Res
                 builtin: Box::new(meta.builtin),
             })?;
         }
+        Metadata::ExternalType(meta) => {
+            iface.types.add_known_type(&Type::External {
+                module_path: meta.module_path.clone(),
+                name: meta.name,
+                namespace: meta.namespace.clone(),
+                kind: meta.kind,
+                tagged: meta.tagged,
+            })?;
+        }
     }
     Ok(())
 }

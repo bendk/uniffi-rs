@@ -52,20 +52,30 @@ impl InterfaceCollector {
         APIBuilder::process(&defns, &mut ci)?;
         // Any misc items we need to add to the set.
         for t in ci.types.type_definitions.values() {
-            if let Type::Custom {
-                module_path,
-                name,
-                builtin,
-            } = t
-            {
-                ci.items.insert(
-                    uniffi_meta::CustomTypeMetadata {
-                        module_path: module_path.clone(),
-                        name: name.clone(),
-                        builtin: (**builtin).clone(),
-                    }
-                    .into(),
-                );
+            match t {
+                Type::External { module_path, name, kind, tagged, .. } => {
+                    ci.items.insert(
+                        uniffi_meta::ExternalTypeMetadata {
+                            module_path: module_path.clone(),
+                            name: name.clone(),
+                            namespace: "".to_owned(),
+                            kind: kind.clone(),
+                            tagged: *tagged,
+                        }
+                        .into(),
+                    );
+                }
+                Type::Custom { module_path, name, builtin } => {
+                    ci.items.insert(
+                        uniffi_meta::CustomTypeMetadata {
+                            module_path: module_path.clone(),
+                            name: name.clone(),
+                            builtin: (**builtin).clone(),
+                        }
+                        .into(),
+                    );
+                }
+                _ => (),
             }
         }
         Ok(ci)

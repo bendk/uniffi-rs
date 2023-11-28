@@ -417,6 +417,25 @@ impl ErrorMetadata {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ExternalTypeMetadata {
+    pub module_path: String,
+    pub name: String,
+    pub namespace: String,
+    pub kind: ExternalKind,
+    pub tagged: bool,
+}
+
+impl ExternalTypeMetadata {
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn module_path(&self) -> &String {
+        &self.module_path
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CustomTypeMetadata {
     pub module_path: String,
     pub name: String,
@@ -444,6 +463,7 @@ pub enum Metadata {
     Record(RecordMetadata),
     Enum(EnumMetadata),
     Error(ErrorMetadata),
+    ExternalType(ExternalTypeMetadata),
     Constructor(ConstructorMetadata),
     Method(MethodMetadata),
     TraitMethod(TraitMethodMetadata),
@@ -469,6 +489,7 @@ impl Metadata {
             Metadata::CallbackInterface(meta) => &meta.module_path,
             Metadata::TraitMethod(meta) => &meta.module_path,
             Metadata::Error(meta) => meta.module_path(),
+            Metadata::ExternalType(meta) => meta.module_path(),
             Metadata::CustomType(meta) => &meta.module_path,
             Metadata::UniffiTrait(meta) => meta.module_path(),
         }
@@ -544,6 +565,12 @@ impl From<TraitMethodMetadata> for Metadata {
 impl From<CustomTypeMetadata> for Metadata {
     fn from(v: CustomTypeMetadata) -> Self {
         Self::CustomType(v)
+    }
+}
+
+impl From<ExternalTypeMetadata> for Metadata {
+    fn from(v: ExternalTypeMetadata) -> Self {
+        Self::ExternalType(v)
     }
 }
 

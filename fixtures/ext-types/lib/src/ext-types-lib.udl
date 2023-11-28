@@ -31,6 +31,10 @@ typedef extern UniffiOneType;
 [External="uniffi_one"]
 typedef extern UniffiOneEnum;
 
+// An enum in the same crate that's not used in the interface
+[External="uniffi_one"]
+typedef extern UniffiOneEnum2;
+
 // An interface in the same crate
 [ExternalInterface="uniffi_one"]
 typedef extern UniffiOneInterface;

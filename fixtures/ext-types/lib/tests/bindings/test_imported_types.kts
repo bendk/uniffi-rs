@@ -46,5 +46,8 @@ assert(getMaybeUniffiOneEnum(null) == null)
 assert(getUniffiOneEnums(listOf(uoe)) == listOf(uoe))
 assert(getMaybeUniffiOneEnums(listOf(uoe, null)) == listOf(uoe, null))
 
+// This tests that UniffiOneEnum2 is defined
+assert(UniffiOneEnum2.THREE != UniffiOneEnum2.FOUR)
+
 assert(ct.ecd.sval == "ecd")
 assert(getExternalCrateInterface("foo").value() == "foo")
