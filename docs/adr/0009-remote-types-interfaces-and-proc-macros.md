@@ -40,7 +40,7 @@ For example, users can use `Log::Level` in their interface by creating a type al
 
 defining it like so:
 
-```rust
+```idl
 enum LogLevel {
     "Error",
     "Warn",
