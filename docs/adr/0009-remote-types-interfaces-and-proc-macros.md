@@ -40,7 +40,7 @@ For example, users can use `Log::Level` in their interface by creating a type al
 
 defining it like so:
 
-```
+```rust
 enum LogLevel {
     "Error",
     "Warn",
@@ -58,7 +58,7 @@ We could continue to expose remote types directly, similar to how it currently w
 One issue here is that proc-macro generation is based attributes that wrap an item, however there's no way for a user to add an attribute to a remote type.
 However, macros can work around this issue.
 
-```
+```rust
 type LogLevel = log::Level;
 
 uniffi::remote!(
@@ -77,7 +77,7 @@ The `enum LogLevel` item would not end up in the expanded code.
 
 This could also work for interfaces:
 
-```
+```rust
 type AnyhowError = anyhow::Error;
 
 uniffi::remote!(
@@ -93,7 +93,7 @@ uniffi::remote!(
 One issue with this approach is that we can only export methods that are compatible with UniFFI.
 However, users could add an extension trait to create adapter methods that are UniFFI compatible:
 
-```
+```rust
 type AnyhowError = anyhow::Error;
 
 pub trait AnyhowErrorExt {
@@ -133,7 +133,7 @@ The above code could be shortened using the [extend](https://crates.io/crates/ex
 UniFFI could also offer syntactic sugar:
 
 
-```
+```rust
 type AnyhowError = anyhow::Error;
 
 // This expands to the equivelent code as the above block
@@ -158,7 +158,7 @@ uniffi::remote_extend!(
 
 The same idea could also be spelled out using an attribute macro rather than a function-like macro:
 
-```
+```rust
 #[uniffi::remote]
 pub enum LogLevel {
     Error = 1,
@@ -182,7 +182,7 @@ impl AnyhowError {
 An alternate strategy would be to use a custom-type conversion from that type into a local type that does implement the UniFFI traits.
 These examples will use the custom type syntax from #2087, since I think it looks nicer than the current `UniffiCustomTypeConverter` based code.
 
-```
+```rust
 /// Define a type that mirrors `Log::Level`
 #[derive(uniffi::Enum)]
 pub enum LogLevel {
