@@ -18,7 +18,7 @@
 /// For the types that involve memory allocation, we make a distinction between
 /// "owned" types (the recipient must free it, or pass it to someone else) and
 /// "borrowed" types (the sender must keep it alive for the duration of the call).
-use uniffi_meta::{ExternalKind, Type};
+use uniffi_meta::Type;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub enum FfiType {
@@ -131,28 +131,20 @@ impl From<&Type> for FfiType {
             | Type::Map { .. }
             | Type::Timestamp
             | Type::Duration => FfiType::RustBuffer(None),
-            Type::External {
+            // Custom types depend on whether we know the builtin.
+            // (this seems wrong? but UDL doesn't know the builtin for external ones)
+            Type::Custom {
+                builtin: Some(b), ..
+            } => FfiType::from(b.as_ref()),
+            Type::Custom {
+                builtin: None,
                 name,
-                kind: ExternalKind::Interface,
-                ..
-            }
-            | Type::External {
-                name,
-                kind: ExternalKind::Trait,
-                ..
-            } => FfiType::RustArcPtr(name.clone()),
-            Type::External {
-                name,
-                kind: ExternalKind::DataClass,
                 module_path,
-                namespace,
-                ..
             } => FfiType::RustBuffer(Some(ExternalFfiMetadata {
                 name: name.clone(),
                 module_path: module_path.clone(),
-                namespace: namespace.clone(),
+                namespace: "".to_string(), //  This will break #2195!
             })),
-            Type::Custom { builtin, .. } => FfiType::from(builtin.as_ref()),
         }
     }
 }

@@ -180,7 +180,7 @@ impl<'a> MetadataReader<'a> {
             codes::TYPE_CUSTOM => Type::Custom {
                 module_path: self.read_string()?,
                 name: self.read_string()?,
-                builtin: Box::new(self.read_type()?),
+                builtin: self.read_optional_type()?.map(Box::new),
             },
             codes::TYPE_OPTION => Type::Optional {
                 inner_type: Box::new(self.read_type()?),

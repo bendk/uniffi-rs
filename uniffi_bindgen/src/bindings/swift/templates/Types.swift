@@ -65,6 +65,7 @@
 {%- include "CallbackInterfaceTemplate.swift" %}
 
 {%- when Type::Custom { name, module_path, builtin } %}
+{% let builtin = builtin.as_ref().expect("local custom-types must know their builtin") -%}
 {%- include "CustomType.swift" %}
 
 {%- when Type::Enum { name, module_path } %}

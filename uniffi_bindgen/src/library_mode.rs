@@ -21,11 +21,9 @@ use crate::{
 };
 use anyhow::bail;
 use camino::Utf8Path;
-use std::{collections::HashMap, fs};
+use std::{collections::BTreeMap, fs};
 use toml::value::Table as TomlTable;
-use uniffi_meta::{
-    create_metadata_groups, fixup_external_type, group_metadata, Metadata, MetadataGroup,
-};
+use uniffi_meta::{create_metadata_groups, group_metadata, Metadata, MetadataGroup};
 
 /// Generate foreign bindings
 ///
@@ -103,41 +101,38 @@ pub fn find_components(
 ) -> Result<Vec<Component<TomlTable>>> {
     let items = macro_metadata::extract_from_library(library_path)?;
     let mut metadata_groups = create_metadata_groups(&items);
+
     group_metadata(&mut metadata_groups, items)?;
 
-    // Collect and process all UDL from all groups at the start - the fixups
-    // of external types makes this tricky to do as we finalize the group.
-    let mut udl_items: HashMap<String, MetadataGroup> = HashMap::new();
-
-    for group in metadata_groups.values() {
+    for group in metadata_groups.values_mut() {
         let crate_name = group.namespace.crate_name.clone();
-        if let Some(mut metadata_group) = load_udl_metadata(group, &crate_name, config_supplier)? {
-            // fixup the items.
-            metadata_group.items = metadata_group
+        if let Some(udl_group) = load_udl_metadata(group, &crate_name, config_supplier)? {
+            let mut udl_items = udl_group
                 .items
                 .into_iter()
-                .map(|item| fixup_external_type(item, &metadata_groups))
                 // some items are both in UDL and library metadata. For many that's fine but
                 // uniffi-traits aren't trivial to compare meaning we end up with dupes.
                 // We filter out such problematic items here.
                 .filter(|item| !matches!(item, Metadata::UniffiTrait { .. }))
                 .collect();
-            udl_items.insert(crate_name, metadata_group);
+            group.items.append(&mut udl_items);
         };
     }
 
+    let ext_namespace_map: BTreeMap<String, String> = metadata_groups
+        .iter()
+        .map(|(k, v)| (k.clone(), v.namespace.name.clone()))
+        .collect();
     metadata_groups
         .into_values()
         .map(|group| {
             let crate_name = &group.namespace.crate_name;
             let mut ci = ComponentInterface::new(crate_name);
-            if let Some(metadata) = udl_items.remove(crate_name) {
-                ci.add_metadata(metadata)?;
-            };
             ci.add_metadata(group)?;
             let config = config_supplier
                 .get_toml(ci.crate_name())?
                 .unwrap_or_default();
+            ci.set_external_namespaces(ext_namespace_map.clone());
             Ok(Component { ci, config })
         })
         .collect()

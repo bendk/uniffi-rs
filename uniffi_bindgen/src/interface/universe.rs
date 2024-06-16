@@ -9,7 +9,7 @@
 use anyhow::Result;
 use std::{collections::hash_map::Entry, collections::BTreeSet, collections::HashMap};
 
-pub use uniffi_meta::{AsType, ExternalKind, NamespaceMetadata, ObjectImpl, Type, TypeIterator};
+pub use uniffi_meta::{AsType, NamespaceMetadata, ObjectImpl, Type, TypeIterator};
 
 /// The set of all possible types used in a particular component interface.
 ///
@@ -87,11 +87,12 @@ impl TypeUniverse {
             Type::Object { name, .. }
             | Type::Record { name, .. }
             | Type::Enum { name, .. }
-            | Type::CallbackInterface { name, .. }
-            | Type::External { name, .. } => self.add_type_definition(name, type_)?,
+            | Type::CallbackInterface { name, .. } => self.add_type_definition(name, type_)?,
             Type::Custom { name, builtin, .. } => {
                 self.add_type_definition(name, type_)?;
-                self.add_known_type(builtin)?;
+                if let Some(builtin) = builtin {
+                    self.add_known_type(builtin)?;
+                }
             }
             // Structurally recursive types.
             Type::Optional { inner_type, .. } | Type::Sequence { inner_type, .. } => {
@@ -125,6 +126,33 @@ impl TypeUniverse {
     /// Iterator over all the known types in this universe.
     pub fn iter_known_types(&self) -> impl Iterator<Item = &Type> {
         self.all_known_types.iter()
+    }
+
+    /// Iterator over all the builtins and all other types "defined"
+    /// in this universe.
+    pub fn iter_local_types(&self) -> impl Iterator<Item = &Type> {
+        self.all_known_types.iter().filter(|t| {
+            !matches!(t,
+                    Type::Object { module_path, .. }
+                    | Type::Record { module_path, .. }
+                    | Type::Enum { module_path, .. }
+                    | Type::CallbackInterface { module_path, .. }
+                    | Type::Custom { module_path, .. }
+                    if module_path != &self.namespace.crate_name)
+        })
+    }
+
+    /// Iterator over all the (non-builtin) types defined in another component.
+    pub fn iter_external_types(&self) -> impl Iterator<Item = &Type> {
+        self.all_known_types.iter().filter(|t| {
+            matches!(t,
+                    Type::Object { module_path, .. }
+                    | Type::Record { module_path, .. }
+                    | Type::Enum { module_path, .. }
+                    | Type::CallbackInterface { module_path, .. }
+                    | Type::Custom { module_path, .. }
+                    if module_path != &self.namespace.crate_name)
+        })
     }
 }
 

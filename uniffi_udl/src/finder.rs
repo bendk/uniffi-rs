@@ -25,6 +25,24 @@ use super::TypeCollector;
 use crate::attributes::{InterfaceAttributes, RustKind, TypedefAttributes};
 use uniffi_meta::{ObjectImpl, Type};
 
+// We broke this, so try and be as helpful as possible.
+static ERR_TYPEDEF_EXTERN: &str = r#"`typedef extern` is no longer supported.
+You must replace `extern` with the type of the object:
+* "enum" for Enums.
+* "record", "dictionary" or "struct" for Records.
+* "object", "impl" or "interface" for objects.
+* "trait", "callback" or "trait_with_foreign" for traits.
+
+For example:
+[External="crate_name"]
+typedef extern ExternalEnum;
+
+Would be replaced with:
+[External="crate_name"]
+typedef enum ExternalEnum;
+
+See https://mozilla.github.io/uniffi-rs/next/udl/ext_types.html for more."#;
+
 /// Trait to help with an early "type discovery" phase when processing the UDL.
 ///
 /// This trait does structural matching against weedle AST nodes from a parsed
@@ -112,10 +130,6 @@ impl TypeFinder for weedle::EnumDefinition<'_> {
 impl TypeFinder for weedle::TypedefDefinition<'_> {
     fn add_type_definitions_to(&self, types: &mut TypeCollector) -> Result<()> {
         let attrs = TypedefAttributes::try_from(self.attributes.as_ref())?;
-        // If we wanted simple `typedef`s, it would be as easy as:
-        // > let t = types.resolve_type_expression(&self.type_)?;
-        // > types.add_type_definition(name, t)
-        // But we don't - `typedef`s are reserved for external types.
         if attrs.is_custom() {
             // A local type which wraps a builtin and for which we will generate an
             // `FfiConverter` implementation.
@@ -125,7 +139,7 @@ impl TypeFinder for weedle::TypedefDefinition<'_> {
                 Type::Custom {
                     module_path: types.module_path(),
                     name: self.identifier.0.to_string(),
-                    builtin: builtin.into(),
+                    builtin: Some(builtin.into()),
                 },
             )
         } else {
@@ -138,15 +152,38 @@ impl TypeFinder for weedle::TypedefDefinition<'_> {
                 )) => i.0,
                 _ => bail!("Failed to get typedef type: {:?}", self),
             };
-
-            let module_path = types.module_path();
             let name = self.identifier.0.to_string();
-
-            let ty = match attrs.external_tagged() {
+            let ty = match attrs.rust_kind() {
+                // The `[Rust=]` attribute is deprecated, but we still support it.
+                Some(rust_kind) => {
+                    let module_path = types.module_path();
+                    match rust_kind {
+                        RustKind::Object => Type::Object {
+                            module_path,
+                            name,
+                            imp: ObjectImpl::Struct,
+                        },
+                        RustKind::Trait => Type::Object {
+                            module_path,
+                            name,
+                            imp: ObjectImpl::Trait,
+                        },
+                        RustKind::CallbackTrait => Type::Object {
+                            module_path,
+                            name,
+                            imp: ObjectImpl::CallbackTrait,
+                        },
+                        RustKind::Record => Type::Record { module_path, name },
+                        RustKind::Enum => Type::Enum { module_path, name },
+                        RustKind::CallbackInterface => {
+                            Type::CallbackInterface { module_path, name }
+                        }
+                    }
+                }
                 None => {
-                    // Not external, not custom, not Rust - so we basically
-                    // pretend it is Rust, thus soft-deprecating it.
-                    // We use `type_`
+                    let module_path = attrs
+                        .get_external_crate_name()
+                        .unwrap_or_else(|| types.module_path());
                     match typedef_type {
                         "dictionary" | "record" | "struct" => Type::Record {
                             module_path,
@@ -156,7 +193,11 @@ impl TypeFinder for weedle::TypedefDefinition<'_> {
                             module_path,
                             name,
                         },
-                        "custom" => panic!("don't know builtin"),
+                        "custom" => Type::Custom {
+                            module_path,
+                            name,
+                            builtin: None,
+                        },
                         "interface" | "impl" => Type::Object {
                             module_path,
                             name,
@@ -172,42 +213,9 @@ impl TypeFinder for weedle::TypedefDefinition<'_> {
                             name,
                             imp: ObjectImpl::CallbackTrait,
                         },
+                        // "extern" gets a special error to help upgrading
+                        "extern" => bail!(ERR_TYPEDEF_EXTERN),
                         _ => bail!("Can't work out the type - no attributes and unknown extern type '{typedef_type}'"),
-                    }
-                }
-                Some(_tagged) => {
-                    // Must be either `[Rust..]` or `[Extern..]`
-                    match attrs.rust_kind() {
-                        Some(RustKind::Object) => Type::Object {
-                            module_path,
-                            name,
-                            imp: ObjectImpl::Struct,
-                        },
-                        Some(RustKind::Trait) => Type::Object {
-                            module_path,
-                            name,
-                            imp: ObjectImpl::Trait,
-                        },
-                        Some(RustKind::CallbackTrait) => Type::Object {
-                            module_path,
-                            name,
-                            imp: ObjectImpl::CallbackTrait,
-                        },
-                        Some(RustKind::Record) => Type::Record { module_path, name },
-                        Some(RustKind::Enum) => Type::Enum { module_path, name },
-                        Some(RustKind::CallbackInterface) => {
-                            Type::CallbackInterface { module_path, name }
-                        }
-                        // must be external
-                        None => {
-                            let kind = attrs.external_kind().expect("External missing kind");
-                            Type::External {
-                                name,
-                                namespace: "".to_string(), // we don't know this yet
-                                module_path: attrs.get_crate_name(),
-                                kind,
-                            }
-                        }
                     }
                 }
             };
@@ -235,7 +243,7 @@ impl TypeFinder for weedle::CallbackInterfaceDefinition<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use uniffi_meta::{ExternalKind, ObjectImpl};
+    use uniffi_meta::ObjectImpl;
 
     // A helper to take valid UDL and a closure to check what's in it.
     fn test_a_finding<F>(udl: &str, tester: F)
@@ -309,26 +317,26 @@ mod test {
         test_a_finding(
             r#"
             [External="crate-name"]
-            typedef extern ExternalType;
+            typedef enum ExternalType;
 
-            [ExternalInterface="crate-name"]
-            typedef extern ExternalInterfaceType;
+            [External="crate-name"]
+            typedef interface ExternalInterfaceType;
 
             [Custom]
             typedef string CustomType;
         "#,
             |types| {
                 assert!(
-                    matches!(types.get_type_definition("ExternalType").unwrap(), Type::External { name, module_path, kind: ExternalKind::DataClass, .. }
+                    matches!(types.get_type_definition("ExternalType").unwrap(), Type::Enum { name, module_path,  .. }
                                                                                  if name == "ExternalType" && module_path == "crate-name")
                 );
                 assert!(
-                    matches!(types.get_type_definition("ExternalInterfaceType").unwrap(), Type::External { name, module_path, kind: ExternalKind::Interface, .. }
+                    matches!(types.get_type_definition("ExternalInterfaceType").unwrap(), Type::Object { name, module_path, imp: ObjectImpl::Struct }
                                                                                  if name == "ExternalInterfaceType" && module_path == "crate-name")
                 );
                 assert!(
                     matches!(types.get_type_definition("CustomType").unwrap(), Type::Custom { name, builtin, ..}
-                                                                                     if name == "CustomType" && *builtin == Type::String)
+                                                                                     if name == "CustomType" && builtin.as_ref().unwrap().as_ref() == &Type::String)
                 );
             },
         );
@@ -336,7 +344,6 @@ mod test {
 
     #[test]
     fn test_extern_local_types() {
-        // should test more, but these are already deprecated
         test_a_finding(
             r#"
             typedef interface Interface;

@@ -9,13 +9,13 @@ mod ffi_names;
 pub use ffi_names::*;
 
 mod group;
-pub use group::{create_metadata_groups, fixup_external_type, group_metadata, MetadataGroup};
+pub use group::{create_metadata_groups, group_metadata, MetadataGroup};
 
 mod reader;
 pub use reader::{read_metadata, read_metadata_type};
 
 mod types;
-pub use types::{AsType, ExternalKind, ObjectImpl, Type, TypeIterator};
+pub use types::{AsType, ObjectImpl, Type, TypeIterator};
 
 mod metadata;
 
@@ -472,7 +472,7 @@ impl Checksum for ObjectTraitImplMetadata {
 pub struct CustomTypeMetadata {
     pub module_path: String,
     pub name: String,
-    pub builtin: Type,
+    pub builtin: Option<Type>,
 }
 
 /// Returns the last 16 bits of the value's hash as computed with [`SipHasher13`].

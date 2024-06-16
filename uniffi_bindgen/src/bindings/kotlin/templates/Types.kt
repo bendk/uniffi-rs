@@ -129,13 +129,16 @@ object NoPointer
 {% include "DurationHelper.kt" %}
 
 {%- when Type::Custom { module_path, name, builtin } %}
+{% let builtin = builtin.as_ref().expect("local custom-types must know their builtin") -%}
 {% include "CustomTypeTemplate.kt" %}
-
-{%- when Type::External { module_path, name, namespace, .. } %}
-{% include "ExternalTypeTemplate.kt" %}
 
 {%- else %}
 {%- endmatch %}
+{%- endfor %}
+
+{#- External types #}
+{%- for type_ in ci.iter_external_types() %}
+{%- include "ExternalTypeTemplate.kt" %}
 {%- endfor %}
 
 {%- if ci.has_async_fns() %}

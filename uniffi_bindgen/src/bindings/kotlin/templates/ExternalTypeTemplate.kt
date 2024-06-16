@@ -1,4 +1,5 @@
-{%- let package_name=self.external_type_package_name(module_path, namespace) %}
+{%- let package_name=self.external_type_package_name(type_.module_path().unwrap()) %}
+{%- let name = type_.name().unwrap() %}
 {%- let fully_qualified_type_name = "{}.{}"|format(package_name, name|class_name(ci)) %}
 {%- let fully_qualified_ffi_converter_name = "{}.FfiConverterType{}"|format(package_name, name) %}
 {%- let fully_qualified_rustbuffer_name = "{}.RustBuffer"|format(package_name) %}

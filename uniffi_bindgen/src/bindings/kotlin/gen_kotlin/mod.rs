@@ -20,7 +20,6 @@ mod callback_interface;
 mod compounds;
 mod custom;
 mod enum_;
-mod external;
 mod miscellany;
 mod object;
 mod primitives;
@@ -221,13 +220,13 @@ impl<'a> TypeRenderer<'a> {
     }
 
     // Get the package name for an external type
-    fn external_type_package_name(&self, module_path: &str, namespace: &str) -> String {
+    fn external_type_package_name(&self, module_path: &str) -> String {
         // config overrides are keyed by the crate name, default fallback is the namespace.
         let crate_name = module_path.split("::").next().unwrap();
         match self.config.external_packages.get(crate_name) {
             Some(name) => name.clone(),
             // unreachable in library mode - all deps are in our config with correct namespace.
-            None => format!("uniffi.{namespace}"),
+            None => format!("uniffi.{module_path}"),
         }
     }
 
@@ -541,7 +540,6 @@ impl<T: AsType> AsCodeType for T {
                 key_type,
                 value_type,
             } => Box::new(compounds::MapCodeType::new(*key_type, *value_type)),
-            Type::External { name, .. } => Box::new(external::ExternalCodeType::new(name)),
             Type::Custom { name, .. } => Box::new(custom::CustomCodeType::new(name)),
         }
     }
@@ -707,13 +705,10 @@ mod filters {
         let ffi_func = callable.ffi_rust_future_complete(ci);
         let call = format!("UniffiLib.INSTANCE.{ffi_func}(future, continuation)");
         let call = match callable.return_type() {
-            Some(Type::External {
-                kind: ExternalKind::DataClass,
-                name,
-                ..
-            }) => {
+            Some(t) if ci.is_external_rustbuffer(&t) => {
+                let name = t.name().expect("external types are named");
                 // Need to convert the RustBuffer from our package to the RustBuffer of the external package
-                let suffix = KotlinCodeOracle.class_name(ci, &name);
+                let suffix = KotlinCodeOracle.class_name(ci, name);
                 format!("{call}.let {{ RustBuffer{suffix}.create(it.capacity.toULong(), it.len.toULong(), it.data) }}")
             }
             _ => call,

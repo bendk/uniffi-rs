@@ -51,16 +51,8 @@ impl ObjectImpl {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Checksum, Ord, PartialOrd)]
-pub enum ExternalKind {
-    Interface,
-    Trait,
-    // Either a record or enum
-    DataClass,
-}
-
-/// Represents all the different high-level types that can be used in a component interface.
-/// At this level we identify user-defined types by name, without knowing any details
+/// Represents metadata about the different high-level types that can be described.
+/// We identify user-defined types by name, without knowing any details
 /// of their internal structure apart from what type of thing they are (record, enum, etc).
 #[derive(Debug, Clone, Eq, PartialEq, Checksum, Ord, PartialOrd)]
 pub enum Type {
@@ -112,19 +104,11 @@ pub enum Type {
         key_type: Box<Type>,
         value_type: Box<Type>,
     },
-    // An FfiConverter we `use` from an external crate
-    External {
-        module_path: String,
-        name: String,
-        #[checksum_ignore] // The namespace is not known generating scaffolding.
-        namespace: String,
-        kind: ExternalKind,
-    },
     // Custom type on the scaffolding side
     Custom {
         module_path: String,
         name: String,
-        builtin: Box<Type>,
+        builtin: Option<Box<Type>>,
     },
 }
 
@@ -148,7 +132,6 @@ impl Type {
             Type::Object { name, .. } => Some(name),
             Type::Record { name, .. } => Some(name),
             Type::Enum { name, .. } => Some(name),
-            Type::External { name, .. } => Some(name),
             Type::Custom { name, .. } => Some(name),
             _ => None,
         }
@@ -159,7 +142,6 @@ impl Type {
             Type::Object { module_path, .. } => Some(module_path),
             Type::Record { module_path, .. } => Some(module_path),
             Type::Enum { module_path, .. } => Some(module_path),
-            Type::External { module_path, .. } => Some(module_path),
             Type::Custom { module_path, .. } => Some(module_path),
             _ => None,
         }
@@ -170,7 +152,6 @@ impl Type {
             Type::Object { name, .. } => *name = new_name,
             Type::Record { name, .. } => *name = new_name,
             Type::Enum { name, .. } => *name = new_name,
-            Type::External { name, .. } => *name = new_name,
             Type::Custom { name, .. } => *name = new_name,
             _ => {}
         }
@@ -195,8 +176,10 @@ impl Type {
                 key_type.rename_recursive(name_transformer);
                 value_type.rename_recursive(name_transformer);
             }
-            Type::Custom { builtin, .. } => {
-                builtin.rename_recursive(name_transformer);
+            Type::Custom {
+                builtin: Some(b), ..
+            } => {
+                b.rename_recursive(name_transformer);
             }
             _ => {}
         }

@@ -15,7 +15,7 @@
 //! if we grow significantly more complicated attribute handling.
 
 use anyhow::{bail, Result};
-use uniffi_meta::{Checksum, ExternalKind, ObjectImpl};
+use uniffi_meta::{Checksum, ObjectImpl};
 
 /// Represents an attribute parsed from UDL, like `[ByRef]` or `[Throws]`.
 ///
@@ -32,15 +32,9 @@ pub(super) enum Attribute {
     Throws(String),
     Traits(Vec<String>),
     // `[External="crate_name"]` - We can `use crate_name::...` for the type.
-    External {
-        crate_name: String,
-        kind: ExternalKind,
-        export: bool,
-    },
+    External { crate_name: String, export: bool },
     Remote,
-    Rust {
-        kind: RustKind,
-    },
+    Rust { kind: RustKind },
     // Custom type on the scaffolding side
     Custom,
     // The interface described is implemented as a trait.
@@ -101,33 +95,7 @@ impl TryFrom<&weedle::attribute::ExtendedAttribute<'_>> for Attribute {
                     "Self" => Ok(Attribute::SelfType(SelfType::try_from(&identity.rhs)?)),
                     "External" => Ok(Attribute::External {
                         crate_name: name_from_id_or_string(&identity.rhs),
-                        kind: ExternalKind::DataClass,
-                        export: false,
-                    }),
-                    "ExternalExport" => Ok(Attribute::External {
-                        crate_name: name_from_id_or_string(&identity.rhs),
-                        kind: ExternalKind::DataClass,
-                        export: true,
-                    }),
-                    "ExternalInterface" => Ok(Attribute::External {
-                        crate_name: name_from_id_or_string(&identity.rhs),
-                        kind: ExternalKind::Interface,
-                        export: false,
-                    }),
-                    "ExternalInterfaceExport" => Ok(Attribute::External {
-                        crate_name: name_from_id_or_string(&identity.rhs),
-                        kind: ExternalKind::Interface,
-                        export: true,
-                    }),
-                    "ExternalTrait" => Ok(Attribute::External {
-                        crate_name: name_from_id_or_string(&identity.rhs),
-                        kind: ExternalKind::Trait,
-                        export: false,
-                    }),
-                    "ExternalTraitExport" => Ok(Attribute::External {
-                        crate_name: name_from_id_or_string(&identity.rhs),
-                        kind: ExternalKind::Trait,
-                        export: true,
+                        export: false, // kill this too
                     }),
                     "Rust" => Ok(Attribute::Rust {
                         kind: rust_kind_from_id_or_string(&identity.rhs)?,
@@ -613,14 +581,11 @@ impl TryFrom<&weedle::attribute::IdentifierOrString<'_>> for SelfType {
 pub(super) struct TypedefAttributes(Vec<Attribute>);
 
 impl TypedefAttributes {
-    pub(super) fn get_crate_name(&self) -> String {
-        self.0
-            .iter()
-            .find_map(|attr| match attr {
-                Attribute::External { crate_name, .. } => Some(crate_name.clone()),
-                _ => None,
-            })
-            .expect("must have a crate name")
+    pub(super) fn get_external_crate_name(&self) -> Option<String> {
+        self.0.iter().find_map(|attr| match attr {
+            Attribute::External { crate_name, .. } => Some(crate_name.clone()),
+            _ => None,
+        })
     }
 
     pub(super) fn is_custom(&self) -> bool {
@@ -629,25 +594,9 @@ impl TypedefAttributes {
             .any(|attr| matches!(attr, Attribute::Custom { .. }))
     }
 
-    pub(super) fn external_kind(&self) -> Option<ExternalKind> {
-        self.0.iter().find_map(|attr| match attr {
-            Attribute::External { kind, .. } => Some(*kind),
-            _ => None,
-        })
-    }
-
     pub(super) fn rust_kind(&self) -> Option<RustKind> {
         self.0.iter().find_map(|attr| match attr {
             Attribute::Rust { kind, .. } => Some(*kind),
-            _ => None,
-        })
-    }
-
-    pub(super) fn external_tagged(&self) -> Option<bool> {
-        // If it was "exported" via a proc-macro the FfiConverter was not tagged.
-        self.0.iter().find_map(|attr| match attr {
-            Attribute::External { export, .. } => Some(!*export),
-            Attribute::Rust { .. } => Some(false),
             _ => None,
         })
     }
@@ -1033,14 +982,7 @@ mod test {
             weedle::attribute::ExtendedAttributeList::parse("[External=crate_name]").unwrap();
         let attrs = TypedefAttributes::try_from(&node).unwrap();
         assert!(!attrs.is_custom());
-        assert_eq!(attrs.get_crate_name(), "crate_name");
-
-        let (_, node) =
-            weedle::attribute::ExtendedAttributeList::parse("[ExternalInterface=crate_name ]")
-                .unwrap();
-        let attrs = TypedefAttributes::try_from(&node).unwrap();
-        assert!(!attrs.is_custom());
-        assert_eq!(attrs.get_crate_name(), "crate_name");
+        assert_eq!(attrs.get_external_crate_name().unwrap(), "crate_name");
     }
 
     #[test]

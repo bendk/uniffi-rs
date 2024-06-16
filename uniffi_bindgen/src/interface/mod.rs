@@ -52,7 +52,7 @@ use std::{
 use anyhow::{anyhow, bail, ensure, Result};
 
 pub mod universe;
-pub use uniffi_meta::{AsType, EnumShape, ExternalKind, ObjectImpl, Type};
+pub use uniffi_meta::{AsType, EnumShape, ObjectImpl, Type};
 use universe::{TypeIterator, TypeUniverse};
 
 mod callbacks;
@@ -96,6 +96,8 @@ pub struct ComponentInterface {
     errors: HashSet<String>,
     // Types which were seen used as callback interface error.
     callback_interface_throws_types: BTreeSet<Type>,
+    // A mapping from an external module path to the external namespace.
+    external_namespaces: BTreeMap<String, String>,
 }
 
 impl ComponentInterface {
@@ -151,6 +153,10 @@ impl ComponentInterface {
         self.types.add_known_type(&uniffi_meta::Type::String)?;
         crate::macro_metadata::add_group_to_ci(self, group)?;
         Ok(())
+    }
+
+    pub fn set_external_namespaces(&mut self, namespaces: BTreeMap<String, String>) {
+        self.external_namespaces = namespaces
     }
 
     /// The string namespace within which this API should be presented to the caller.
@@ -307,22 +313,39 @@ impl ComponentInterface {
         self.is_name_used_as_error(&e.name) && (fielded || used_in_foreign_interface)
     }
 
-    /// Get details about all `Type::Custom` types
+    /// Get details about all `Type`s defined in external crates.
+    pub fn iter_external_types(&self) -> impl Iterator<Item = &Type> {
+        self.types.iter_external_types()
+    }
+
+    /// Get details about all local `Type::Custom` types
     pub fn iter_custom_types(&self) -> impl Iterator<Item = (&String, &Type)> {
-        self.types.iter_known_types().filter_map(|t| match t {
-            Type::Custom { name, builtin, .. } => Some((name, &**builtin)),
+        self.types.iter_local_types().filter_map(|t| match t {
+            Type::Custom { name, builtin, .. } => Some((
+                name,
+                &**(builtin
+                    .as_ref()
+                    .expect("local custom-types must know their builtin")),
+            )),
             _ => None,
         })
     }
 
-    /// Iterate over all known types in the interface.
+    /// Iterate over all known local types in the interface.
     pub fn iter_types(&self) -> impl Iterator<Item = &Type> {
-        self.types.iter_known_types()
+        self.types.iter_local_types()
     }
 
     /// Get a specific type
     pub fn get_type(&self, name: &str) -> Option<Type> {
         self.types.get_type_definition(name)
+    }
+
+    pub fn namespace_for_type(&self, ty: &Type) -> &String {
+        let mod_path = ty.module_path().expect("type has no module path");
+        self.external_namespaces
+            .get(mod_path)
+            .expect("unresolved module path")
     }
 
     /// Iterate over all types contained in the given item.
@@ -340,16 +363,8 @@ impl ComponentInterface {
     /// tightly with the host GC, and hence need to perform manual destruction of objects.
     pub fn item_contains_object_references(&self, item: &Type) -> bool {
         // this is surely broken for external records with object refs?
-        self.iter_types_in_item(item).any(|t| {
-            matches!(
-                t,
-                Type::Object { .. }
-                    | Type::External {
-                        kind: ExternalKind::Interface,
-                        ..
-                    }
-            )
-        })
+        self.iter_types_in_item(item)
+            .any(|t| matches!(t, Type::Object { .. }))
     }
 
     /// Check whether the given item contains any (possibly nested) unsigned types
@@ -382,7 +397,7 @@ impl ComponentInterface {
     /// Check whether the interface contains any object types
     pub fn contains_object_types(&self) -> bool {
         self.types
-            .iter_known_types()
+            .iter_local_types()
             .any(|t| matches!(t, Type::Object { .. }))
     }
 
@@ -964,6 +979,12 @@ impl ComponentInterface {
             })?;
         object.trait_impls.push(trait_impl);
         Ok(())
+    }
+
+    // ??
+    pub fn is_external_rustbuffer(&self, ty: &Type) -> bool {
+        matches!(ty, Type::Enum { module_path, ..} | Type::Record { module_path, ..} | Type::Object { module_path, ..} |
+            Type::CallbackInterface { module_path, ..} if module_path != self.crate_name())
     }
 
     /// Perform global consistency checks on the declared interface.

@@ -22,7 +22,6 @@ mod callback_interface;
 mod compounds;
 mod custom;
 mod enum_;
-mod external;
 mod miscellany;
 mod object;
 mod primitives;
@@ -272,6 +271,9 @@ impl<'a> TypeRenderer<'a> {
         let mut ordered = vec![];
         for type_ in self.ci.iter_types() {
             if let Type::Custom { name, builtin, .. } = type_ {
+                let builtin = builtin
+                    .as_ref()
+                    .expect("local custom types must know their builtin");
                 match ordered.iter().position(|x: &(&str, &Type)| {
                     x.1.iter_types()
                         .any(|nested_type| *name == nested_type.as_codetype().type_label())
@@ -559,7 +561,6 @@ impl<T: AsType> AsCodeType for T {
                 key_type,
                 value_type,
             } => Box::new(compounds::MapCodeType::new(*key_type, *value_type)),
-            Type::External { name, .. } => Box::new(external::ExternalCodeType::new(name)),
             Type::Custom { name, .. } => Box::new(custom::CustomCodeType::new(name)),
         }
     }
