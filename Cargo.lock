@@ -1475,6 +1475,7 @@ version = "0.28.0"
 dependencies = [
  "anyhow",
  "camino",
+ "cargo_metadata",
  "clap",
  "trybuild",
  "uniffi_bindgen",
@@ -1626,6 +1627,7 @@ dependencies = [
 name = "uniffi-fixture-docstring-proc-macro"
 version = "0.22.0"
 dependencies = [
+ "cargo_metadata",
  "glob",
  "thiserror",
  "uniffi",
@@ -1781,6 +1783,13 @@ version = "0.22.0"
 dependencies = [
  "lazy_static",
  "thiserror",
+ "uniffi",
+]
+
+[[package]]
+name = "uniffi-fixture-proc-macro-no-implicit-prelude"
+version = "0.22.0"
+dependencies = [
  "uniffi",
 ]
 
