@@ -30,6 +30,14 @@
 
 - Added the `FfiType::MutReference` variant.
 
+### Deprecations for external bindings authors
+
+- The `uniffi_bindgen::ir` module was added, which will replace the `ComponentInterface`.  External
+  bindings authors are encouraged to start using the new system, which will ease the transition when
+  `ComponentInterface` is removed.  See
+  https://mozilla.github.io/uniffi-rs/latest/internals/bindings_render_pipeline.html for an
+  overview on how the new system works.
+
 [All changes in [[UnreleasedUniFFIVersion]]](https://github.com/mozilla/uniffi-rs/compare/v0.28.3...HEAD).
 
 ## v0.28.3 (backend crates: v0.28.3) - (_2024-11-08_)
