@@ -1,0 +1,4 @@
+[bindings.kotlin]
+package_name = "org.mozilla.uniffi.benchmarks"
+android_cleaner = true
+
