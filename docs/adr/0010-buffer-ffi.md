@@ -9,56 +9,46 @@ Discussion and approval: [PR 2816](https://github.com/mozilla/uniffi-rs/pull/281
 ## Context and Problem Statement
 
 Our current FFI is based on passing arguments/return values using the C ABI.
-This forces languages like Kotlin, Python, and JS that can't make C calls directly
-to use an intermediate layer to make these calls.
+This forces us to convert types that can't be represented by the C ABI
+when passing them across the FFI (e.g. enums, Arcs, etc).
+Furthermore, languages like Kotlin, Python, and JS that can't make C calls directly
+and need to use an intermediate layer to make these calls.
 Usually this means a libffi-based library, like ctypes or JNA.
-However, there are several issues with this approach:
 
-* Performance can be poor especially when using JNA.
+There are several issues with this approach:
+
+* Performance can be poor, especially when using JNA.
 * JNA is has been a persistent source of issues on Kotlin.
   There are a couple current issues without clear solutions: #2740, #2624.
 * Limitations in these libraries limit how we can design the FFI.
   For example, callback methods can't return values directly because of https://bugs.python.org/issue5710.
 
-We want to design a new FFI that avoids these issues as much as possible.
+We want to rework our FFI approach based on this experience.
+This document discusses several general methods for passing values across an FFI.
+It proposes 2 general FFIs that can work as a baseline
+and sketches out they can be extended to create language-specific FFIs.
 
-## Scope
+The main focus of this ADR is creating a new Kotlin FFI
+since we've been seeing both performance issues and crashes with the current FFI.
+However other languages are also discussed.
 
-This document discussion a new FFI for languages like Kotlin, Python, and JS that can't make C calls directly.
-This hopefully helps us move toward a stable "1.0" FFI,
-but this document is not proposing that we freeze the API at this point.
+## Passing values over the FFI
 
-Languages like Swift that can make C calls directly are not considered.
-Maybe we will continue to use the current FFI for those languages or maybe we'll develop another new FFI.
+There are several different ways for passing arguments and return values across the FFI.
+Each can be useful in different scenarios.
 
-The exact mechanism for making these calls is also out-of-scope for this ADR.
-For example, Kotlin and Java may use JNA or JNI.
+### FFI buffer
 
-## Decision Drivers
-
-## Decisions
-
-This document is organized around several independent decisions rather than a single one.
-Hopefully this makes each decision clearer.
-
-### Using a buffer to pass FFI values
-
-The main proposal is to change the general form for FFI calls to:
+We could use a single "FFI buffer" to pass arguments, return values, and the call status.
+Scaffolding signatures would look like:
 
 ```
-extern "C" uniffi_buffer_ffi_function_name(ffi_buffer: *u8) {
-    // ... code here
-}
+extern "C" uniffi_buffer_ffi_function_name(ffi_buffer: *u8);
 ```
-
-Each FFI call inputs a single buffer that's used for both input arguments and return values.
-Let's name the FFI the "Buffer FFI" and the function argument the "FFI buffer".
-To avoid conflicts with the current FFI, all FFI functions should be prefix with `uniffi_buffer_`
-
 Callees should:
 
- * Read all arguments from the buffer
- * Lift the argument data into high-level types
+ * Read the FFI values for all arguments from the buffer
+ * Lift those FFI values into high-level types
  * Call the exported function using the lifted arguments
  * Lower the return value into an FFI type
  * Write the result the buffer:
@@ -66,11 +56,14 @@ Callees should:
     * For expected errors, write `1` followed by the error value
     * For unexpected errors, write `2` followed by a `RustBuffer` containing a error message.
 
-#### Packing primitive values to the FFI buffer
+#### Packing values to the FFI buffer
 
 * Ints and floats are packed in native-endian format.
 * Pointers are casted to `u64` values then packed into the buffer.
   Function pointers are handled the same way.
+* Structs are packed by serializing each field in order.
+* Enums are packed by serializing the discriminant as a `u64` value,
+  then packing each field of that variant in order.
 * All items are aligned to 64-bit addresses.
 
 #### Allocating the buffer
@@ -97,12 +90,11 @@ with benchmarks showing that it performs much faster than the current FFI.
 See the appendix below for details,
 the TLDR is that it speeds up most calls by a factor of 100x or so.
 
-### Using JNI/pyo3 to pass FFI values
+### Language-specific bindings layers (JNI/pyo3)
 
-The main alternative to the buffer FFI that was considered
-was using a language-specific bindings layer like JNI or pyo3.
-Defining a Python module using the C API is another potential path.
-We mostly focused on JNI and this section will reflect that.
+Another approach is using a language-specific bindings layer like JNI, pyo3,
+or defining a Python module using the C-API.
+So far, we been focused on JNI and this section will reflect that.
 However, it's expected that the same logic applies to pyo3 and other systems.
 
 This would mean generating Rust code that looked like this:
@@ -170,20 +162,22 @@ pub unsafe extern "system" fn Java_some_package_name_UniffiLibrary_rustFunc(
 The corresponding generated Kotlin code would be fairly simple,
 since a lot of the lowering is happening in the JNI layer.
 
-JNI code performs better than buffers in some cases:
+### Performance
+
+JNI code performs better than FFI buffers in some cases:
 
 * **Primitive values** (ints, floats, bools, etc).  Benchmarks show about a 20% speedup.
 * **Arrays of primitives**.
   This has not been tested, but it seems safe to assume the JNI approach is faster.
 
-However, buffers perform faster in other cases:
+However, FFI buffers perform better in other cases:
 
 * **Structs**.
   It's slightly faster to read elements from a buffer than to make a JNI function call for each field.
 * **Enums**.
   In addition to needing JNI calls per field, but you also need JNI calls to figure out the enum variant.
   Calling `IsInstanceOf` for each variant seems very slow (although this has not been tested).
-* **Nested data** (vecs of structs, hash maps, structs with enum fields, etc).
+* **Nested data** (arrays of structs, hash maps, structs with enum fields, etc).
   At this point buffers start to significantly out-perform JNI
   since you need to make more than 1 JNI call per item.
   For example, with a vec of structs you need to make an extra JNI call per item in addition to the
@@ -192,170 +186,64 @@ However, buffers perform faster in other cases:
 See https://github.com/mozilla/uniffi-rs/issues/2672 for further discussion and the rough
 benchmarks.
 
-JNI supports passing nio buffers to the C functions which we could use to speed up these cases.
-We could use the nio buffers for cases from the second list
-and "normal JNI" for cases in the first list.
+### C-ABI
 
-However, if the only cases where you don't want a buffer are primitives and arrays of primitives,
-you start to wonder why not use a buffer for everything?
-The performance difference will often be negligible
-since primitive values are already quite fast relative to structs/enums,
-and the code generation would be simplified.
-This would essentially mean we're back to the buffer FFI approach, but using JNI to implement it.
+We're currently using the C-ABI to pass primitive arguments.
+We could choose to double-down on the C-ABI and use it to pass more values:
 
-### Using the C ABI to pass FFI values
-
-Another option would be to double-down on the C-ABI and use it to pass structs and enums as well.
-Structs would be passed as the `repr(C)` version of the struct.
-Enums would be passed as tagged unions: one `u64` field for the variant discriminant
+* Structs could be passed as the `repr(C)` version of the struct.
+* Enums could be passed as tagged unions: one `u64` field for the variant discriminant
 and a `repr(C)` union for the variant data.
+* Strings could be passed as a (pointer, length) pair.
 
-This would be difficult to implement in JNA and would likely be slower than the existing code,
-since it would require more complex JNA logic to read and write the structs.
-However, this might be great for a language like Swift that natively supports C interoperability.
+#### Performance
 
-### Options
+This would likely improve performance for languages like Swift that natively support C interoperability.
 
-* [A1] Buffer FFI
-   * Good, because it creates simple FFI signatures which will help to avoid JNA bugs
-     and workaround limitations like Python ctypes prohibiting callbacks from returning structs.
-   * Good, because it has nearly the best performance.
-   * Good, because we get more control around the FFI.
-     For example, we've historically always had to pass structs and enums using a `RustBuffer`
-     because it was deemed to complex to pass them over the C-ABI.
-     However, it's not hard to pack structs/enums into the FFI buffer -- see below.
-   * Good, because we can eliminate the `RustCallStatus` out pointer.
-     This only exists because we can't handle enums in the current FFI.
-   * Good, because all FFI functions have the same signature, which can simplify the codegen.
-     In particular, I think it could significantly improve `uniffi-bindgen-gecko-js`
-     which needs to generate a C++ layer to allow JS to call Rust scaffolding functions.
-     Maybe we could replace some or all of that layer with 2 functions:
-     `get_scaffolding_function(name: String) -> ScaffoldingFunction` and
-     and `call_scaffolding_function(func: ScaffoldingFunction, buf: ArrayBuffer)`.
-     These could call any UniFFI scaffolding function regardless of the signature of the underlying Rust function.
-   * Bad, because we need to cast/serialize data pointers and function pointers to the buffer.
-     This makes pointer providence trickier and could cause issues on exotic platforms
-     where the pointer width is greater than 64 bits.
-
-* [A2] Current FFI
-   * Good, because we've already implemented it.
- 
-* [A3] Language-specific FFIs, like JNA/pyo3
-   * Bad, because it performs poorly for structs/enums/nested data.
-   * Bad, because each language needs specialized generated Rust code.
-
-* [A4] A3, using a buffer for specific types to improve performance
-   * Good, because has the best performance.
-   * Bad, because it's more complex than A1.
-   * Bad, because each language needs specialized generated Rust code.
-
-* [A5] All in on the C-ABI
-   * Bad, because it's very difficult to implement on Kotlin and Python
-   * Potentially bad, because using more complex C types may hurt performance for those languages.
-   * Good, because it's has a straightforward implementation on Swift
-     and other languages that support native call C-ABI interoperability.
-   * Good, because should have good performance on those languages.
-
-#### Immediate Decision Outcome
-
-Option [A1] Buffer FFI
-
-#### Future options to consider:
-
-* [A4] Language-specific FFIs, using a buffer for specific types to improve performance
-* [A5] All in on the C-ABI
-
-Both of these seem reasonable and could improve on A1 in specific circumstances.
-We may decide to pursue this in the future, but we're going to start by focusing on [A1].
-
-#### Decision Drivers
-
-* We want to prioritize simple codegen over the fastest performance,
-  but we don't want close the door to future optimizations.
-* The JNA-related crashes are bad enough that we should move away from the current FFI.
-* Implementing [A1] can makes implementing [A4] easier and can be seen as the first step.
-
-### Passing Structs and Enums
-
-We currently pass structs and enums using a `RustBuffer`.
-This was to avoid the complexity of defining JNA/ctypes subclasses for each time.
-Enums provide an extra source of complexity, since they require definning a tagged union.
-
-However, with the buffer FFI, we can easily pass struct/enums directly.
-For structs, we simply serialize each field in order.
-For enums, we serialize the tag as a `u64` value, then pack each field of the variant.
-This process can be applied recursively for nested structs/enums.
-
-Another option would be to pass structs and enums using a reference.
-This could improve performance for large structs/enums by avoiding a copy.
-However, this is only possible if we know the field layout.
-
-* [B1] Pass structs/enums using RustBuffers
-* [B2] Serialize structs/enums fields into the FFI buffer
-  * Good, because it avoids a RustBuffer allocation for these values
-  * Bad, because it can lead to extra RustBuffer allocations for child values.
-    However, see the next section for how we can avoid this.
-* [B3] Pass structs/enums using references
-  * Good, because it can avoid a copy in some cases
-  * Bad, because only works when we know the field layout.
-    In practice this means it only works for Rust -> FFI calls.
-    Furthermore, we'd have to handle `#[repr]` attributes somehow.
-  * Bad, because it adds significant complexity to the FFI.
-  
-#### Decision Outcome
-
-Option [B2] Serialize structs/enums fields into the FFI buffer
+However, it would likely be slower for languages like Kotlin.
+One of the main contributors to performance issues right now is reading JNA structs
+and adding more structs and introducing unions will almost certainly hurt.
 
 ### RustBuffer and heap data
 
+Heap data requires special consideration since it may not fit in an FFI buffer
+or on the stack at all.
+This means a RustBuffer allocation is required to pass this data.
+
 One issue with our current FFI is that we can allocate multiple RustBuffers per call
-and this issue could get even worse with the proposed changes.
+since we currently allocate a RustBuffer for values that require heap allocation (vecs, hash-maps, strings).
+We also allocate RustBuffers for any structs/enums values (including `Option`).
 
-We currently allocate a RustBuffer for values that require heap allocation (vecs, hash-maps, strings),
-as well any any structs/enums values (including `Option`).
-After the change, we don't need to allocate a RustBuffer for structs/enums
-but that ironically may increase the total number of allocations.
-If a struct or enum has N fields that are passed using a RustBuffer,
-then could mean allocating N RustBuffers where before we only allocated 1.
+If we use an FFI buffer to pass values, we can avoid allocating a RustBuffer for structs/enums.
+Ironically may increase the total number of allocations
+since we'll need to allocate a RustBuffer for any fields that need it.
+If a struct or enum has N fields that are heap-allocated, we'll be allocating N RustBuffers instead of 1.
 
-To avoid all of this, use a single buffer for the arguments if any is a heap value.
-This will be used instead of the normal FFI buffer for all arguments.
-Caller will allocate this buffer on the heap before the call and free it afterwards.
+We can avoid this overhead by allocating a single RustBuffer if any argument or a descendent field is heap-allocated.
+We then pack each heap-allocated argument into that RustBuffer, in order.
+The caller will allocate the RustBuffer before the call and free it afterwards.
+
+In addition to reducing the number of allocations, this also can simplify the generated code.
+Currently callees need to free multiple buffers,
+with this system the caller will only need to free one.
 
 #### Returning heap values
 
 If the return value is a heap value, the callee will allocate a new RustBuffer to store it.
-The callee will write its fields to the FFI buffer like any return.
 The caller is responsible for freeing the return buffer once the return value has been lifted.
 
 #### Packing vecs/hash-maps/strings to the FFI buffer
 
 For each of these, first pack the length of the value as a `u64`.
-Then pack each vec item, string byte, or map key/value pair in order.
-All items will be aligned to 64-bit boundaries, except string bytes.
+Then pack each vec item, string bytes, or map key/value pair in order.
+All items will be aligned to 64-bit boundaries, except the individual string bytes.
 Use native-endian when packing items.
 
 #### Optimizing particular cases
 
 There are several optimizations could avoid RustBuffer allocations in some cases.
-For example, passing strings as a pointer/length pair or passing small objects using the normal FFI buffer.
-We may optimize for these cases in the future, but this ADR doesn't make any proposals.
-
-### Options
-
-* [C1] One RustBuffer per heap type
-* [C2] Single buffer for all arguments
-  * Good, because it limits the number of allocations
-  * Good, because it simplifies the memory management
-    Callers only need to free a single buffer rather than multiple ones
-* [C3] Avoid allocations for certain cases
-  * Good, because it can eliminate allocations altogether
-  * Good, because it can eliminate copies
-  * Bad, because it adds extra complexity to the FFI
-  
-#### Decision Outcome
-
-Option [C2] Single buffer for all arguments
+For example, passing strings as a pointer/length pair or passing small objects using the FFI buffer.
+Note however, that there will always be some types that require a RustBuffer, like HashMaps.
 
 ### Low-hanging fruit
 
@@ -367,7 +255,110 @@ These all feel obvious, so they're simple listed here without much discussion:
   * `rustbuffer_alloc` can return a pointer since the caller knows the length/capacity
   * `rustbuffer_free` can input the pointer/length/capacity as separate arguments, rather than the struct.
 
+## Options
+
+### [A] Single C-ABI FFI for all languages
+
+This is the current approach
+
+* Bad, because it has poor performance on Kotlin/Python
+* Bad, because it has load to JNA crashes on Kotlin
+* Bad, because limitations in one language influence the FFI for all languages
+* Bad, because it's difficult to pass structs/enums without a RustBuffer.
+  One consequence is that we need to include the `call_status` out-pointer in each FFI signature.
+* Good, because we only need to generate one version of the scaffolding.
+
+### [B] Generalized FFIs, with opportunities for extensions
+
+Define 2 general FFIs:
+
+* Buffer FFI
+  * When no heap allocations are required, FFI calls input a single FFI buffer
+    (i.e. their signature is `(ffi_buffer: *u8) -> ()`.
+    This buffer is used for both the arguments and return value.
+  * For calls that require a RustBuffer allocation for an argument, a single RustBuffer will be allocated.
+    The RustBuffer data will be passed instead of the FFI buffer
+    (signature: `(data: *u8, len: usize, capacity: usize) -> ()`)
+    Callers will allocated and free this RustBuffer.
+    This will be instead of the normal FFI buffer for all arguments and the return value.
+  * For calls that require a RustBuffer allocation for the return value,
+    the callee will allocate a RustBuffer and return it using the normal methods
+    (i.e. serializing the fields to the FFI buffer).
+    The caller is responsible for freeing the RustBuffer.
+  * This FFI will be used for languages like Kotlin, Python, and JS that can't make C calls natively.
+* C FFI
+  * Primitive values, structs, and enums, will be passed separate `repr(c)` arguments.
+    They will also be returned using the same representation.
+  * For calls that require a RustBuffer allocation for an argument, a single RustBuffer will be allocated.
+    This RustBuffer will be passed as an single extra argument (again as a `repr(c)` struct).
+    Callers will allocated and free this RustBuffer.
+  * For calls that require a RustBuffer allocation for the return value,
+    the callee will allocate a RustBuffer and return it.
+    The caller is responsible for freeing the RustBuffer.
+  * This FFI will be used for languages like Swift and C++ that can make C calls natively.
+
+Bindings could also use the Buffer FFI with language-specific extensions, for example:
+  * Using JNI/pyo3/WASM to make the FFI calls.
+  * Passing primitive values using JNI primitives rather than FFI buffers.
+  * Passing buffers using language-specific types like ArrayBuffer
+    or something like the JNA Pointer class.
+  * How this would exactly work is out of scope for this ADR,
+    but languages would be encouraged to test out different approaches here.
+
+Pros and cons:
+
+* Good, because the general FFIs will improve performance compared to the current FFI
+* Good, because the Buffer FFI will decrease JNA crashes
+* Good, because the Buffer FFI can simplify the FFI for languages like Kotlin/Python/JS.
+  For example, we can avoid the call status out-pointer.
+* Good, because language-specific extensions can be used to maximize performance
+* Bad, because language-specific extensions require more code and increase the overall complexity
+* Good, because in the buffer FFI creates FFI functions with a known/small number of signatures.
+ I think it could significantly improve `uniffi-bindgen-gecko-js`
+ which needs to generate a C++ layer to allow JS to call Rust scaffolding functions.
+ Maybe we could replace some or all of that layer with a few functions:
+   * `get_scaffolding_function(name: String) -> ScaffoldingFunction`
+   * `call_scaffolding_function(func: ScaffoldingFunction, buf: ArrayBuffer)`.
+   * Maybe we'll need separate versions of these for FFI functions that input/output RustBuffers
+     rather than FFI buffers.
+     However, there's still only going to be a fairly small number of total functions needed.
+* Bad, because we need to cast/serialize data pointers and function pointers to FFI buffers.
+ This makes pointer providence trickier and could cause issues on exotic platforms
+ where the pointer width is greater than 64 bits.
+
+### [C] Bespoke FFIs for each language
+
+We could just say each bindings generator can implement it's own FFI and leave it at that.
+In a technical sense, this is equivalent to [B].
+However, without agreeing to some general FFI approaches,
+we will probably end up multiplying the complexity unnecessarily.
+
+* Good, for all of the reasons of [B]
+* Bad, because it can lead to more fragmentation between bindings and more complexity overall.
+
+### Decision: [B] Generalized FFIs, with opportunities for extensions
+
 ## Appendix
+
+### Implementation plan
+
+Our current implementation plan at this point is to:
+
+* Implement the buffer FFI and switch Kotlin to using it
+* Investigate implementing a Kotlin-specific JNI FFI to improve performance
+  and remove the need for JNA.
+* Package the Kotlin JNI in a way that Java bindings can also use it.
+* Investigate switching uniffi-bindgen-gecko-js to use something based on the buffer FFI.
+  This will have to be a language-specific FFI,
+  since we have no way of making C ABI calls from Spidermonkey.
+
+Future work that we hope to do (in no particular order)
+* Implement the C FFI and switch Swift to using it
+* Switch Python to a new FFI
+* Help external bindings authors update their FFI layers
+* Do something with Ruby.
+  Maybe this is a good to to release ownership of it and turn it into an external binding.
+* Mark the current FFI as deprecated and remove it at some point after that.
 
 ### Performance testing
 
@@ -432,9 +423,8 @@ A quick review of the generated Kotlin code shows that:
   boltffi calls this the "WireProtocol" and defines `WireReader` and `WireWriter` types.
   boltffi uses a separate buffer for each of these values.
 
-This is very close to [A4]:
-  * We also pass Object handles as longs
-  * It uses a mixed strategy of sometimes passing JVM values directly and sometimes packing them in a buffer.
-    We may decide to use a different strategy for particular types, but the general strategy is the same
-  * The main difference is that boltffi allocates and passes multiple buffers,
-    while this ADR recommends using a single buffer for all arguments.
+This is pretty much how we imagine the Kotlin JNI bindings will look:
+  * Object handles are passed as longs, just like we currently do.
+  * Some values are passed as JVM primitives and some are packed into a FFI buffer.
+  * The main difference is that boltffi allocates multiple buffers,
+    while this ADR recommends using a single buffer for all arguments and for the return values.
