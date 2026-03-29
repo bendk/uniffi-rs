@@ -1926,6 +1926,7 @@ dependencies = [
  "anyhow",
  "jni-sys",
  "simd_cesu8",
+ "uniffi",
 ]
 
 [[package]]
