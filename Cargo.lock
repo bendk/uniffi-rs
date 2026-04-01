@@ -1938,6 +1938,7 @@ dependencies = [
  "uniffi-bindgen-kotlin-jni",
  "uniffi-bindgen-kotlin-jni-runtime",
  "uniffi-bindgen-tests",
+ "uniffi-bindgen-tests-external-types-source",
 ]
 
 [[package]]
