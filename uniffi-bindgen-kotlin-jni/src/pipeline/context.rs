@@ -19,6 +19,7 @@ pub struct Context {
     pub type_id_map: HashMap<Type, usize>,
     pub current_crate_name: Option<String>,
     pub current_namespace_name: Option<String>,
+    pub current_enum: Option<general::Enum>,
 }
 
 impl Context {
@@ -58,6 +59,9 @@ impl Context {
                 general::TypeDefinition::Record(r) => {
                     Some((r.orig_name.clone(), r.module_path.clone()))
                 }
+                general::TypeDefinition::Enum(e) => {
+                    Some((e.orig_name.clone(), e.module_path.clone()))
+                }
                 _ => None,
             })
             .collect()
@@ -66,6 +70,10 @@ impl Context {
     pub fn update_from_namespace(&mut self, namespace: &general::Namespace) {
         self.current_crate_name = Some(namespace.crate_name.clone());
         self.current_namespace_name = Some(namespace.name.clone());
+    }
+
+    pub fn update_from_enum(&mut self, en: &general::Enum) {
+        self.current_enum = Some(en.clone());
     }
 
     pub fn current_crate_name(&self) -> Result<&str> {
@@ -107,5 +115,11 @@ impl Context {
             .and_then(|map| map.get(type_orig_name))
             .map(|s| s.as_str())
             .ok_or_else(|| anyhow!("module path not found: {namespace}:{type_orig_name}"))
+    }
+
+    pub fn current_enum(&self) -> Result<&general::Enum> {
+        self.current_enum
+            .as_ref()
+            .ok_or_else(|| anyhow!("current_enum not set"))
     }
 }

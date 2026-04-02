@@ -35,6 +35,11 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
             namespace,
             orig_name,
             ..
+        }
+        | Type::Enum {
+            namespace,
+            orig_name,
+            ..
         } => {
             format!(
                 "::{}::{orig_name}",
@@ -60,6 +65,9 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
         Type::Boolean => "Boolean".into(),
         Type::String => "String".into(),
         Type::Record {
+            namespace, name, ..
+        }
+        | Type::Enum {
             namespace, name, ..
         } => {
             format!("{}.{name}", context.package_name(namespace)?)
