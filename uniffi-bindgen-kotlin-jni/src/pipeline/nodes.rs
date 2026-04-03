@@ -31,6 +31,7 @@ pub struct Package {
     pub functions: Vec<Function>,
     pub type_definitions: Vec<TypeDefinition>,
     pub scaffolding_functions: Vec<ScaffoldingFunction>,
+    pub imports: IndexSet<String>,
 }
 
 #[derive(Debug, Clone, Node)]
@@ -40,6 +41,7 @@ pub enum TypeDefinition {
     Enum(Enum),
     Interface(Interface),
     Class(Class),
+    Custom(CustomType),
     Optional(OptionalType),
     Sequence(SequenceType),
     Map(MapType),
@@ -96,6 +98,19 @@ pub struct Class {
 pub struct Interface {
     pub name: String,
     pub methods: Vec<Method>,
+    pub docstring: Option<String>,
+}
+
+#[derive(Debug, Clone, Node, MapNode)]
+#[map_node(from(general::CustomType))]
+pub struct CustomType {
+    #[map_node(context.config()?.custom_types.get(&self.name).cloned())]
+    pub config: Option<CustomTypeConfig>,
+    #[map_node(context.current_crate_name()?.to_string())]
+    pub crate_name: String,
+    pub self_type: TypeNode,
+    pub name: String,
+    pub builtin: TypeNode,
     pub docstring: Option<String>,
 }
 
@@ -301,6 +316,7 @@ impl Root {
                     TypeDefinition::Sequence(s) => &s.self_type.id,
                     TypeDefinition::Map(m) => &m.self_type.id,
                     TypeDefinition::Class(c) => &c.self_type.id,
+                    TypeDefinition::Custom(c) => &c.self_type.id,
                     TypeDefinition::Interface(_) => return false,
                 })
             })
@@ -454,6 +470,12 @@ impl Enum {
 
     pub fn name_rs(&self) -> String {
         names::escape_rust(&self.name)
+    }
+}
+
+impl CustomType {
+    pub fn name_kt(&self) -> String {
+        format!("`{}`", self.name.to_upper_camel_case())
     }
 }
 

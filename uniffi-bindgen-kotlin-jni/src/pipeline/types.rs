@@ -56,6 +56,11 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
             namespace,
             orig_name,
             ..
+        }
+        | Type::Custom {
+            namespace,
+            orig_name,
+            ..
         } => {
             format!(
                 "::{}::{orig_name}",
@@ -113,6 +118,9 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
             namespace, name, ..
         }
         | Type::Interface {
+            namespace, name, ..
+        }
+        | Type::Custom {
             namespace, name, ..
         } => {
             format!("{}.{name}", context.package_name(namespace)?)
