@@ -27,6 +27,7 @@ pub struct Package {
     pub config: Config,
     pub functions: Vec<Function>,
     pub type_definitions: Vec<TypeDefinition>,
+    pub imports: IndexSet<String>,
 }
 
 #[derive(Debug, Clone, Node)]
@@ -36,6 +37,7 @@ pub enum TypeDefinition {
     Enum(Enum),
     Interface(Interface),
     Class(Class),
+    Custom(CustomType),
     Optional(OptionalType),
     Sequence(SequenceType),
     Map(MapType),
@@ -93,6 +95,18 @@ pub struct Class {
 pub struct Interface {
     pub name: String,
     pub methods: Vec<Method>,
+    pub docstring: Option<String>,
+}
+
+#[derive(Debug, Clone, Node, MapNode)]
+#[map_node(from(general::CustomType))]
+#[map_node(custom::map_custom)]
+pub struct CustomType {
+    pub config: Option<CustomTypeConfig>,
+    pub crate_name: String,
+    pub self_type: TypeNode,
+    pub name: String,
+    pub builtin: TypeNode,
     pub docstring: Option<String>,
 }
 
