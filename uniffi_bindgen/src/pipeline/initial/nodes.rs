@@ -211,6 +211,7 @@ pub struct Interface {
     pub trait_impls: Vec<ObjectTraitImpl>,
     pub name: String,
     pub orig_name: String,
+    pub module_path: String,
     pub docstring: Option<String>,
     pub imp: ObjectImpl,
 }
@@ -222,6 +223,7 @@ pub struct CallbackInterface {
     pub methods: Vec<Method>,
     pub name: String,
     pub orig_name: String,
+    pub module_path: String,
     pub docstring: Option<String>,
 }
 
@@ -249,6 +251,7 @@ pub struct ObjectTraitImpl {
 pub struct CustomType {
     pub name: String,
     pub orig_name: String,
+    pub module_path: String,
     pub builtin: Type,
     pub docstring: Option<String>,
 }

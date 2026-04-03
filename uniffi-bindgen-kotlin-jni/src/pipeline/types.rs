@@ -62,6 +62,16 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
                 context.module_path_for_type(namespace, orig_name)?
             )
         }
+        Type::Interface {
+            namespace,
+            orig_name,
+            ..
+        } => {
+            format!(
+                "::std::sync::Arc<::{}::{orig_name}>",
+                context.module_path_for_type(namespace, orig_name)?
+            )
+        }
         _ => todo!(),
     })
 }
@@ -100,6 +110,9 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
             namespace, name, ..
         }
         | Type::Enum {
+            namespace, name, ..
+        }
+        | Type::Interface {
             namespace, name, ..
         } => {
             format!("{}.{name}", context.package_name(namespace)?)

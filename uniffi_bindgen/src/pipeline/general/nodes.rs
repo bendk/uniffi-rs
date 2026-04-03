@@ -311,6 +311,7 @@ pub struct Interface {
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,
+    pub module_path: String,
     // This `map_node` works because we've implemented a map from Vec<UniffiTrait> -> UniffiTraitMethods
     #[map_node(from(uniffi_traits))]
     pub uniffi_trait_methods: UniffiTraitMethods,
@@ -334,6 +335,7 @@ pub struct CallbackInterface {
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,
+    pub module_path: String,
     pub docstring: Option<String>,
     #[map_node(objects::callback_interface_methods(self.methods, context)?)]
     pub methods: Vec<Method>,
@@ -379,6 +381,7 @@ pub struct CustomType {
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,
+    pub module_path: String,
     pub builtin: TypeNode,
     pub docstring: Option<String>,
 }
