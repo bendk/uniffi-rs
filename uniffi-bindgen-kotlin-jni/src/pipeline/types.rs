@@ -31,6 +31,22 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
         Type::Float64 => "f64".into(),
         Type::Boolean => "bool".into(),
         Type::String => "::std::string::String".into(),
+        Type::Optional { inner_type } => {
+            format!("::std::option::Option<{}>", type_rs(inner_type, context)?)
+        }
+        Type::Sequence { inner_type } => {
+            format!("::std::vec::Vec<{}>", type_rs(inner_type, context)?)
+        }
+        Type::Map {
+            key_type,
+            value_type,
+        } => {
+            format!(
+                "::std::collections::HashMap<{}, {}>",
+                type_rs(key_type, context)?,
+                type_rs(value_type, context)?,
+            )
+        }
         Type::Record {
             namespace,
             orig_name,
@@ -64,6 +80,22 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
         Type::Float64 => "Double".into(),
         Type::Boolean => "Boolean".into(),
         Type::String => "String".into(),
+        Type::Optional { inner_type } => {
+            format!("{}?", type_kt(inner_type, context)?)
+        }
+        Type::Sequence { inner_type } => {
+            format!("List<{}>", type_kt(inner_type, context)?)
+        }
+        Type::Map {
+            key_type,
+            value_type,
+        } => {
+            format!(
+                "Map<{}, {}>",
+                type_kt(key_type, context)?,
+                type_kt(value_type, context)?,
+            )
+        }
         Type::Record {
             namespace, name, ..
         }
