@@ -7,9 +7,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe, UnwindSafe};
 use anyhow::Result;
 use jni_sys::JNIEnv;
 
-use crate::{CachedClass, JniString};
-
-static INTERNAL_EXCEPTION: CachedClass = CachedClass::new(c"uniffi/InternalException");
+use crate::{throw_internal_exception, JniString};
 
 /// Perform a Rust call and catch any panics
 ///
@@ -33,9 +31,10 @@ where
         Ok(Ok(v)) => v,
         // Failed call
         Ok(Err(e)) => {
-            let class = INTERNAL_EXCEPTION.get(env);
+            // Safety:
+            // env points to a valid JNIEnv
             unsafe {
-                ((**env).v1_2.ThrowNew)(env, class, JniString::from(e.to_string()).as_ptr());
+                throw_internal_exception(env, JniString::from(e.to_string()));
             }
             T::default()
         }
@@ -52,10 +51,8 @@ where
 
             // Safety:
             // env points to a valid JNIEnv
-            // We're using the JNI API correctly
             unsafe {
-                let class = INTERNAL_EXCEPTION.get(env);
-                ((**env).v1_2.ThrowNew)(env, class, message.as_ptr());
+                throw_internal_exception(env, message);
             }
             T::default()
         }

@@ -24,6 +24,14 @@ All arguments and return values are written/read from the buffer.
 * The caller passes the buffer to the callee.
 * If there is a return value, the callee writes it to the same buffer.
 
+# Errors/exceptions
+
+Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
+
+* Rust writes the error value to the FFI buffer passed to the scaffolding function.
+* Rust calls the Kotlin read method using JNI to construct the exception value
+* Rust then causes the current JNI function to throw.
+
 # Kotlin `uniffi` package
 
 This is a generated package that contains all the FFI functions.

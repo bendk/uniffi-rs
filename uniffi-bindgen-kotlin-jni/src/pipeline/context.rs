@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::*;
 
@@ -22,6 +22,7 @@ pub struct Context {
     pub current_crate_name: Option<String>,
     pub current_namespace_name: Option<String>,
     pub current_enum: Option<general::Enum>,
+    pub types_used_as_error: HashSet<Type>,
 }
 
 impl Context {
@@ -44,6 +45,11 @@ impl Context {
                 Self::function_module_paths(namespace),
             );
         }
+        root.visit(|type_node: &general::TypeNode| {
+            if type_node.is_used_as_error && !self.types_used_as_error.contains(&type_node.ty) {
+                self.types_used_as_error.insert(type_node.ty.clone());
+            }
+        });
         self.populate_type_id_map(root);
         Ok(())
     }

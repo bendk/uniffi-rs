@@ -83,30 +83,30 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
 
 pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
     Ok(match ty {
-        Type::UInt8 => "UByte".into(),
-        Type::Int8 => "Byte".into(),
-        Type::UInt16 => "UShort".into(),
-        Type::Int16 => "Short".into(),
-        Type::UInt32 => "UInt".into(),
-        Type::Int32 => "Int".into(),
-        Type::UInt64 => "ULong".into(),
-        Type::Int64 => "Long".into(),
-        Type::Float32 => "Float".into(),
-        Type::Float64 => "Double".into(),
-        Type::Boolean => "Boolean".into(),
-        Type::String => "String".into(),
+        Type::UInt8 => "kotlin.UByte".into(),
+        Type::Int8 => "kotlin.Byte".into(),
+        Type::UInt16 => "kotlin.UShort".into(),
+        Type::Int16 => "kotlin.Short".into(),
+        Type::UInt32 => "kotlin.UInt".into(),
+        Type::Int32 => "kotlin.Int".into(),
+        Type::UInt64 => "kotlin.ULong".into(),
+        Type::Int64 => "kotlin.Long".into(),
+        Type::Float32 => "kotlin.Float".into(),
+        Type::Float64 => "kotlin.Double".into(),
+        Type::Boolean => "kotlin.Boolean".into(),
+        Type::String => "kotlin.String".into(),
         Type::Optional { inner_type } => {
             format!("{}?", type_kt(inner_type, context)?)
         }
         Type::Sequence { inner_type } => {
-            format!("List<{}>", type_kt(inner_type, context)?)
+            format!("kotlin.collections.List<{}>", type_kt(inner_type, context)?)
         }
         Type::Map {
             key_type,
             value_type,
         } => {
             format!(
-                "Map<{}, {}>",
+                "kotlin.collections.Map<{}, {}>",
                 type_kt(key_type, context)?,
                 type_kt(value_type, context)?,
             )
@@ -123,7 +123,11 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
         | Type::Custom {
             namespace, name, ..
         } => {
-            format!("{}.{name}", context.package_name(namespace)?)
+            format!(
+                "{}.{}",
+                context.package_name(namespace)?,
+                names::class_name_kt(name, context.types_used_as_error.contains(&ty)),
+            )
         }
         _ => todo!(),
     })
@@ -262,5 +266,17 @@ impl TypeNode {
             | Type::Map { .. }
             | Type::Box { .. } => format!("{prefix}Type{}", self.id),
         }
+    }
+
+    pub fn jni_signature(&self) -> String {
+        format!("L{};", self.type_kt.replace(".", "/").replace("`", ""))
+    }
+
+    pub fn throw_error_fn_rs(&self) -> String {
+        format!("uniffi_throw_error_{}", self.id)
+    }
+
+    pub fn construct_fn_kt(&self) -> String {
+        format!("construct{}", self.id)
     }
 }

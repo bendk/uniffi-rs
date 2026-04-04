@@ -6,6 +6,7 @@
 mod uniffi_bindgen_kotlin_jni_scaffolding {
     use ::uniffi_bindgen_kotlin_jni_runtime as uniffi_jni;
     use ::uniffi_bindgen_kotlin_jni_runtime::uniffi;
+    use ::uniffi_bindgen_kotlin_jni_runtime::JniResultExt;
 
     {% filter indent(4) %}{% include "shared.rs" %}{% endfilter %}
 

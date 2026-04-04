@@ -10,7 +10,10 @@ pub fn map_callable(input: general::Callable, context: &Context) -> Result<Calla
         kind: input.kind.map_node(context)?,
         name: input.name,
         arguments: input.arguments.map_node(context)?,
-        return_type: input.return_type.ty.map_node(context)?,
+        result: CallableResult {
+            return_type: input.return_type.ty.map_node(context)?,
+            throws_type: input.throws_type.ty.map_node(context)?,
+        },
         fully_qualified_name_rs,
     })
 }

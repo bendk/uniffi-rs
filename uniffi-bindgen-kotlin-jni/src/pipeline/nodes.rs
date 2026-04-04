@@ -64,6 +64,7 @@ pub struct Record {
 #[derive(Debug, Clone, Node, MapNode)]
 #[map_node(from(general::Enum))]
 #[map_node(update_context(context.update_from_enum(&self)))]
+#[map_node(enums::map_enum)]
 pub struct Enum {
     pub is_flat: bool,
     #[map_node(context.config()?.use_enum_entries())]
@@ -74,6 +75,7 @@ pub struct Enum {
     pub variants: Vec<Variant>,
     pub name: String,
     pub shape: EnumShape,
+    pub kotlin_kind: KotlinEnumKind,
     pub docstring: Option<String>,
     pub recursive: bool,
 }
@@ -116,15 +118,21 @@ pub struct CustomType {
 
 #[derive(Debug, Clone, Node, MapNode)]
 #[map_node(from(general::Variant))]
+#[map_node(enums::map_variant)]
 pub struct Variant {
-    #[map_node(enums::variant_name_kt(&self, context)?)]
     pub name_kt: String,
     pub name: String,
     pub discr: LiteralNode,
     pub fields_kind: FieldsKind,
-    #[map_node(records::map_fields(self.fields, context)?)]
     pub fields: Vec<Field>,
     pub docstring: Option<String>,
+}
+
+#[derive(Debug, Clone, Node, MapNode)]
+pub enum KotlinEnumKind {
+    EnumClass { discr_type: Option<String> },
+    FlatError,
+    SealedClass,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -177,8 +185,14 @@ pub struct Callable {
     pub kind: CallableKind,
     pub name: String,
     pub arguments: Vec<Argument>,
-    pub return_type: Option<TypeNode>,
+    pub result: CallableResult,
     pub fully_qualified_name_rs: String,
+}
+
+#[derive(Debug, Clone, Node)]
+pub struct CallableResult {
+    pub return_type: Option<TypeNode>,
+    pub throws_type: Option<TypeNode>,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -322,6 +336,22 @@ impl Root {
             })
     }
 
+    /// Unique throws_types for Rust functions
+    pub fn rust_throws_types(&self) -> impl Iterator<Item = &TypeNode> {
+        let mut seen = HashSet::new();
+        let mut throws_types = vec![];
+        self.visit(|callable: &Callable| {
+            if callable.is_for_rust_function() {
+                if let Some(throws_type) = callable.throws_type() {
+                    if seen.insert(&throws_type.id) {
+                        throws_types.push(throws_type);
+                    }
+                }
+            }
+        });
+        throws_types.into_iter()
+    }
+
     pub fn disable_java_cleaner(&self) -> bool {
         // Try to merge the different config values as best we can.
         // https://github.com/mozilla/uniffi-rs/issues/2866 would help here.
@@ -395,6 +425,33 @@ impl Callable {
             .join(" , ")
     }
 
+    pub fn is_for_rust_function(&self) -> bool {
+        matches!(
+            self.kind,
+            CallableKind::Function
+                | CallableKind::Method { .. }
+                | CallableKind::Constructor { .. }
+                | CallableKind::VTableMethod {
+                    for_callback_interface: false,
+                    ..
+                }
+        )
+    }
+
+    pub fn is_for_kotlin_function(&self) -> bool {
+        matches!(self.kind, CallableKind::VTableMethod { .. })
+    }
+
+    pub fn return_type(&self) -> Option<&TypeNode> {
+        self.result.return_type.as_ref()
+    }
+
+    pub fn throws_type(&self) -> Option<&TypeNode> {
+        self.result.throws_type.as_ref()
+    }
+}
+
+impl CallableResult {
     pub fn return_type_kt(&self) -> &str {
         match &self.return_type {
             None => "Unit",
@@ -405,7 +462,7 @@ impl Callable {
 
 impl Class {
     pub fn name_kt(&self) -> String {
-        format!("`{}`", self.name.to_upper_camel_case())
+        names::class_name_kt(&self.name, self.self_type.is_used_as_error)
     }
 
     pub fn name_rs(&self) -> String {
@@ -455,7 +512,7 @@ impl Interface {
 
 impl Record {
     pub fn name_kt(&self) -> String {
-        format!("`{}`", self.name.to_upper_camel_case())
+        names::class_name_kt(&self.name, self.self_type.is_used_as_error)
     }
 
     pub fn name_rs(&self) -> String {
@@ -465,17 +522,21 @@ impl Record {
 
 impl Enum {
     pub fn name_kt(&self) -> String {
-        format!("`{}`", self.name.to_upper_camel_case())
+        names::class_name_kt(&self.name, self.self_type.is_used_as_error)
     }
 
     pub fn name_rs(&self) -> String {
         names::escape_rust(&self.name)
     }
+
+    pub fn is_flat_error(&self) -> bool {
+        matches!(self.shape, EnumShape::Error { flat: true })
+    }
 }
 
 impl CustomType {
     pub fn name_kt(&self) -> String {
-        format!("`{}`", self.name.to_upper_camel_case())
+        names::class_name_kt(&self.name, self.self_type.is_used_as_error)
     }
 }
 
@@ -498,6 +559,7 @@ impl Field {
         names::escape_rust(&self.name)
     }
 }
+
 impl Argument {
     pub fn name_kt(&self) -> String {
         format!("`{}`", self.name.to_lower_camel_case())

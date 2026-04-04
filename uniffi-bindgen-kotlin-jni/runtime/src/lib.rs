@@ -8,10 +8,12 @@
 
 mod caching;
 mod calls;
+mod errors;
 mod strings;
 
 pub use caching::*;
 pub use calls::*;
+pub use errors::*;
 pub use jni_sys::*;
 pub use strings::*;
 // Re-export for consumers

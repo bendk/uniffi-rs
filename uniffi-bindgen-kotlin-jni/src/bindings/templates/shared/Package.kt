@@ -3,6 +3,7 @@ package uniffi
 class InternalException(message: String) : Exception(message)
 
 {% include "FfiBuffer.kt" %}
+{% include "ConstructTypes.kt" %}
 {% include "Scaffolding.kt" %}
 {% include "Interfaces.kt" %}
 
