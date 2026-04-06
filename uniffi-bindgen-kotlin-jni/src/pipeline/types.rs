@@ -77,6 +77,16 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
                 context.module_path_for_type(namespace, orig_name)?
             )
         }
+        Type::CallbackInterface {
+            namespace,
+            orig_name,
+            ..
+        } => {
+            format!(
+                "::std::boxed::Box<dyn ::{}::{orig_name}>",
+                context.module_path_for_type(namespace, orig_name)?
+            )
+        }
         _ => todo!(),
     })
 }
@@ -118,6 +128,9 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
             namespace, name, ..
         }
         | Type::Interface {
+            namespace, name, ..
+        }
+        | Type::CallbackInterface {
             namespace, name, ..
         }
         | Type::Custom {

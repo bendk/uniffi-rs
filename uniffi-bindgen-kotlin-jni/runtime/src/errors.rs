@@ -45,6 +45,21 @@ pub unsafe fn throwable_get_message(env: *mut JNIEnv, throwable: jthrowable) -> 
     }
 }
 
+/// Check if a throwable is a uniffi.CallbackException
+///
+/// # Safety
+/// env must point to a valid JNIEnv
+pub unsafe fn is_callback_exception(env: *mut JNIEnv, throwable: jthrowable) -> bool {
+    static CLASS: CachedClass = CachedClass::new(c"uniffi/CallbackException");
+    // Safety:
+    // Env points to a valid JNIEnv
+    // We use the JNI API correctly
+    unsafe {
+        let class = CLASS.get(env);
+        ((**env).v1_2.IsInstanceOf)(env, throwable, class) == JNI_TRUE
+    }
+}
+
 /// Extension trait for JNI results
 pub trait JniResultExt {
     type Ok;
