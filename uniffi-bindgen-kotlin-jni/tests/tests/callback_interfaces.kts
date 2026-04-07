@@ -46,11 +46,10 @@ try {
     // Expected
 }
 
-// TODO
-// // Test unexpected errors
-// try {
-//     invokeTestCallbackInterfaceThrowIfEqual(cbi, CallbackInterfaceNumbers(6u, 7u))
-//     throw RuntimeException("Expected RuntimeException to be caught, converted to TestException.Failure2, and thrown")
-// } catch(e: TestException.Failure2) {
-//     assert(e.data.contains("unexpected failure"))
-// }
+// Test unexpected errors
+try {
+    invokeTestCallbackInterfaceThrowIfEqual(cbi, CallbackInterfaceNumbers(6u, 7u))
+    throw RuntimeException("Expected RuntimeException to be caught, converted to TestException.Failure2, and thrown")
+} catch(e: TestException.Failure2) {
+    assert(e.data.contains("unexpected failure"))
+}
