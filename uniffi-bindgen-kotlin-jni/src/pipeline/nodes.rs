@@ -56,6 +56,7 @@ pub struct Record {
     #[map_node(context.config()?.record_is_immutable(&self.name))]
     pub immutable: bool,
     pub name: String,
+    pub orig_name: String,
     #[map_node(records::map_fields(self.fields, context)?)]
     pub fields: Vec<Field>,
     pub docstring: Option<String>,
@@ -75,6 +76,7 @@ pub struct Enum {
     pub discr_specified: bool,
     pub variants: Vec<Variant>,
     pub name: String,
+    pub orig_name: String,
     pub shape: EnumShape,
     pub kotlin_kind: KotlinEnumKind,
     pub docstring: Option<String>,
@@ -89,6 +91,7 @@ pub struct Enum {
 #[map_node(interfaces::map_class)]
 pub struct Class {
     pub name: String,
+    pub orig_name: String,
     pub module_path: String,
     pub self_type: TypeNode,
     pub package_name: String,
@@ -122,6 +125,7 @@ pub struct Interface {
 pub struct CallbackInterface {
     pub self_type: TypeNode,
     pub name: String,
+    pub orig_name: String,
     pub module_path: String,
     pub docstring: Option<String>,
     pub methods: Vec<CallbackMethod>,
@@ -156,6 +160,7 @@ pub struct CustomType {
 pub struct Variant {
     pub name_kt: String,
     pub name: String,
+    pub orig_name: String,
     pub discr: LiteralNode,
     pub fields_kind: FieldsKind,
     pub fields: Vec<Field>,
@@ -172,6 +177,7 @@ pub enum KotlinEnumKind {
 #[derive(Debug, Clone, Node, MapNode)]
 pub struct Field {
     pub name: String,
+    pub orig_name: String,
     pub index: usize,
     pub ty: TypeNode,
     pub default: Option<DefaultValueNode>,
@@ -218,6 +224,7 @@ pub struct ScaffoldingFunction {
 pub struct Callable {
     pub kind: CallableKind,
     pub name: String,
+    pub orig_name: String,
     pub is_async: bool,
     pub arguments: Vec<Argument>,
     pub result: CallableResult,
@@ -251,6 +258,7 @@ pub enum CallableKind {
 #[map_node(from(general::Argument))]
 pub struct Argument {
     pub name: String,
+    pub orig_name: String,
     pub ty: TypeNode,
     pub optional: bool,
     pub default: Option<DefaultValueNode>,
@@ -428,7 +436,7 @@ impl Package {
 
 impl Callable {
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 
     pub fn name_kt(&self) -> String {
@@ -534,7 +542,7 @@ impl Class {
     }
 
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 
     pub fn jni_free_name(&self) -> String {
@@ -565,7 +573,7 @@ impl Class {
         format!(
             "UniffiCallbackImpl{}{}",
             self.crate_name.to_upper_camel_case(),
-            self.name.to_upper_camel_case(),
+            self.orig_name.to_upper_camel_case(),
         )
     }
 
@@ -600,7 +608,7 @@ impl CallbackInterface {
     }
 
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 
     pub fn has_async_method(&self) -> bool {
@@ -627,7 +635,7 @@ impl CallbackInterface {
         format!(
             "UniffiCallbackImpl{}{}",
             self.crate_name.to_upper_camel_case(),
-            self.name.to_upper_camel_case(),
+            self.orig_name.to_upper_camel_case(),
         )
     }
 }
@@ -638,7 +646,7 @@ impl Record {
     }
 
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 }
 
@@ -648,7 +656,7 @@ impl Enum {
     }
 
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 
     pub fn is_flat_error(&self) -> bool {
@@ -670,7 +678,7 @@ impl CallableKind {
 
 impl Variant {
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 }
 
@@ -684,7 +692,7 @@ impl Field {
     }
 
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 }
 
@@ -694,6 +702,6 @@ impl Argument {
     }
 
     pub fn name_rs(&self) -> String {
-        names::escape_rust(&self.name)
+        names::escape_rust(&self.orig_name)
     }
 }
