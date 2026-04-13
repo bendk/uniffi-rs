@@ -43,6 +43,7 @@ pub enum TypeDefinition {
     Class(Class),
     CallbackInterface(CallbackInterface),
     Custom(CustomType),
+    Box(BoxedType),
     Optional(OptionalType),
     Sequence(SequenceType),
     Map(MapType),
@@ -265,6 +266,13 @@ pub struct Argument {
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
+#[map_node(from(general::BoxedType))]
+pub struct BoxedType {
+    pub inner: TypeNode,
+    pub self_type: TypeNode,
+}
+
+#[derive(Debug, Clone, Node, MapNode)]
 #[map_node(from(general::OptionalType))]
 pub struct OptionalType {
     pub inner: TypeNode,
@@ -377,6 +385,7 @@ impl Root {
                     TypeDefinition::Class(c) => &c.self_type.id,
                     TypeDefinition::Custom(c) => &c.self_type.id,
                     TypeDefinition::CallbackInterface(c) => &c.self_type.id,
+                    TypeDefinition::Box(b) => &b.self_type.id,
                     TypeDefinition::Interface(_) => return false,
                 })
             })

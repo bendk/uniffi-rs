@@ -96,6 +96,9 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
                 context.module_path_for_type(namespace, orig_name)?
             )
         }
+        Type::Box { inner_type } => {
+            format!("::std::boxed::Box<{}>", type_rs(inner_type, context)?,)
+        }
         _ => todo!(),
     })
 }
@@ -151,6 +154,7 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
                 names::class_name_kt(name, context.types_used_as_error.contains(&ty)),
             )
         }
+        Type::Box { inner_type } => type_kt(inner_type, context)?,
         _ => todo!(),
     })
 }
