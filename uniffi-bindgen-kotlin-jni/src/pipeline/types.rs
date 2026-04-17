@@ -99,7 +99,9 @@ fn type_rs(ty: &Type, context: &Context) -> Result<String> {
         Type::Box { inner_type } => {
             format!("::std::boxed::Box<{}>", type_rs(inner_type, context)?,)
         }
-        _ => todo!(),
+        Type::Bytes => "::std::vec::Vec<u8>".into(),
+        Type::Duration => "::std::time::Duration".into(),
+        Type::Timestamp => "::std::time::Instant".into(),
     })
 }
 
@@ -155,7 +157,9 @@ pub fn type_kt(ty: &Type, context: &Context) -> Result<String> {
             )
         }
         Type::Box { inner_type } => type_kt(inner_type, context)?,
-        _ => todo!(),
+        Type::Bytes => "kotlin.ByteArray".into(),
+        Type::Duration => "java.time.Duration".into(),
+        Type::Timestamp => "java.time.Instant".into(),
     })
 }
 
