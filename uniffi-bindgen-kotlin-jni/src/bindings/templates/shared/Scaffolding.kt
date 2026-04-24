@@ -19,11 +19,11 @@ object Scaffolding {
 
     {%- for package in root.packages %}
     {%- for scaffolding_function in package.scaffolding_functions %}
-    {% if !scaffolding_function.callable.is_async %}
-    @JvmStatic external fun {{ scaffolding_function.jni_method_name }}(uniffiBufferHandle: Long)
-    {% else %}
-    @JvmStatic external fun {{ scaffolding_function.jni_method_name }}(uniffiBufferHandle: Long): Long
-    {% endif %}
+    @JvmStatic external fun {{ scaffolding_function.jni_method_name }}(
+        {%- if scaffolding_function.callable.uses_buffer() %}
+        uniffiBufferHandle: Long
+        {%- endif %}
+    ){% if scaffolding_function.callable.is_async %}: Long{% endif %}
     {%- endfor %}
 
     {%- for cls in package.classes() %}

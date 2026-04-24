@@ -20,15 +20,20 @@ The main reason is that we only want to parse the source code once.
 `uniffi-bindgen-kotin-jni` leverages the `uniffi::FfiBuffer` type to pass values across the FFI.
 All arguments and return values are written/read from the buffer.
 
-* The caller is responsible for allocating and freeing the buffer.
-* The caller passes the buffer to the callee.
-* If there is a return value, the callee writes it to the same buffer.
+For functions with arguments or return values:
+
+* The caller allocates the buffer
+* The caller passes the buffer handle to the callee.
+* The callee writes the return value to the same buffer, if there is one.
+* The caller frees the buffer
 
 # Errors/exceptions
 
 Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
 
-* Rust writes the error value to the FFI buffer passed to the scaffolding function.
+* Rust writes the error value to a FFI buffer
+    * For functions that require a buffer for the arguments/return values, this buffer is re-used.
+    * If not, then the callee allocates and frees a new buffer
 * Rust calls the Kotlin read method using JNI to construct the exception value
 * Rust then causes the current JNI function to throw.
 

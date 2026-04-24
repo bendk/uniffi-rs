@@ -75,7 +75,18 @@ fn map_methods(
                     interface_name.to_upper_camel_case(),
                     callable.name.to_upper_camel_case(),
                 ),
-                callable: callable.map_node(context)?,
+                callable: {
+                    let mut mapped = callable.map_node(context)?;
+                    mapped.kind = match mapped.kind {
+                        CallableKind::VTableMethod { self_type, .. }
+                        | CallableKind::Method { self_type, .. } => CallableKind::VTableMethod {
+                            self_type,
+                            for_callback_interface: true,
+                        },
+                        kind => bail!("callbacks::map_methods: invalid CallableKind: {kind:?}"),
+                    };
+                    mapped
+                },
             })
         })
         .collect()

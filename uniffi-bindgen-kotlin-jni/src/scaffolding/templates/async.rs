@@ -1,8 +1,7 @@
 const UNIFFI_RUST_FUTURE_POLL_AGAIN: i32 = 0;
 const UNIFFI_RUST_FUTURE_CANCELLED: i32 = 1;
 const UNIFFI_RUST_FUTURE_COMPLETE: i32 = 2;
-const UNIFFI_RUST_FUTURE_ERROR: i32 = 3;
-const UNIFFI_RUST_FUTURE_FAILED: i32 = 4;
+const UNIFFI_RUST_FUTURE_FAILED: i32 = 3;
 
 const UNIFFI_KOTLIN_FUTURE_OK: i32 = 0;
 const UNIFFI_KOTLIN_FUTURE_ERR: i32 = 1;
@@ -13,11 +12,11 @@ const UNIFFI_KOTLIN_FUTURE_ERR: i32 = 1;
 /// `UNIFFI_RUST_FUTURE_COMPLETE` or return `UNIFFI_RUST_FUTURE_FAILED`
 struct UniffiRustFuture {
     scheduler: ::std::sync::Mutex<uniffi::Scheduler<UniffiRustFutureContinutation>>,
-    future: ::std::sync::Mutex<::std::pin::Pin<::std::boxed::Box<dyn std::future::Future<Output = i32> + ::std::marker::Send>>>,
+    future: ::std::sync::Mutex<::std::pin::Pin<::std::boxed::Box<dyn std::future::Future<Output = uniffi_jni::RustFutureResult> + ::std::marker::Send>>>,
 }
 
 impl UniffiRustFuture {
-    fn new(future: impl ::std::future::Future<Output = i32> + std::marker::Send + 'static) -> ::std::sync::Arc<Self> {
+    fn new(future: impl ::std::future::Future<Output = uniffi_jni::RustFutureResult> + std::marker::Send + 'static) -> ::std::sync::Arc<Self> {
         ::std::sync::Arc::new(Self {
             scheduler: ::std::sync::Mutex::new(uniffi::Scheduler::new()),
             future: ::std::sync::Mutex::new(::std::boxed::Box::pin(future)),
@@ -103,11 +102,27 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_uniffiRustFuturePoll(
 
             let mut locked = uniffi_future.future.lock().unwrap();
             let waker = ::std::task::Waker::from(::std::sync::Arc::clone(&uniffi_future));
-            let pinned: std::pin::Pin<&mut dyn ::std::future::Future<Output = i32>> = locked.as_mut();
+            let pinned: std::pin::Pin<&mut dyn ::std::future::Future<Output = uniffi_jni::RustFutureResult>> = locked.as_mut();
             match pinned.poll(&mut ::std::task::Context::from_waker(&waker)) {
-                ::std::task::Poll::Ready(code) => {
-                    uniffi::trace!("RustFuture::poll: ready {code:x}");
-                    Ok(code)
+                ::std::task::Poll::Ready(uniffi_jni::RustFutureResult::Ok) => {
+                    uniffi::trace!("RustFuture::poll: ready");
+                    Ok(UNIFFI_RUST_FUTURE_COMPLETE)
+                }
+                ::std::task::Poll::Ready(uniffi_jni::RustFutureResult::Err { throw_fn, buf, rust_frees_buf }) => {
+                    uniffi::trace!("RustFuture::poll: ready (error)");
+                    // Safety:
+                    // `uniffi_buf` points to a valid FFI buffer
+                    unsafe { throw_fn(uniffi_env, buf.as_ptr()); };
+                    if rust_frees_buf {
+                        buf.free()
+                    }
+                    // The return value doesn't matter, since the Kotlin code will throw once it's
+                    // resumes.  Let's use UNIFFI_RUST_FUTURE_FAILED so that if that fails somehow
+                    // we the async function will still fail.
+                    Ok(UNIFFI_RUST_FUTURE_FAILED)
+                }
+                ::std::task::Poll::Ready(uniffi_jni::RustFutureResult::UnexpectedError) => {
+                    Ok(UNIFFI_RUST_FUTURE_FAILED)
                 }
                 ::std::task::Poll::Pending => {
                     let continuation = UniffiRustFutureContinutation {

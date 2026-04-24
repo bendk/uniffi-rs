@@ -560,6 +560,10 @@ impl Callable {
         matches!(self.kind, CallableKind::VTableMethod { .. })
     }
 
+    pub fn uses_buffer(&self) -> bool {
+        !self.arguments.is_empty() || self.has_receiver() || self.return_type().is_some()
+    }
+
     pub fn return_type(&self) -> Option<&TypeNode> {
         self.result.return_type.as_ref()
     }
@@ -730,6 +734,16 @@ impl CustomType {
 impl CallableKind {
     pub fn is_vtable_method(&self) -> bool {
         matches!(self, CallableKind::VTableMethod { .. })
+    }
+
+    pub fn is_callback_method(&self) -> bool {
+        matches!(
+            self,
+            CallableKind::VTableMethod {
+                for_callback_interface: true,
+                ..
+            }
+        )
     }
 }
 

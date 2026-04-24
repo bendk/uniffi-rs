@@ -6,15 +6,12 @@ private val {{ cbi.handle_map_kt() }} = HandleMap<{{ type_name }}>();
 {%- if !meth.callable.is_async %}
 fun {{ meth.dispatch_fn_kt }}(
     uniffiHandle: Long,
-    uniffiBuffer: Long,
+    {%- if meth.callable.uses_buffer() %}
+    uniffiBuffer: Long
+    {%- endif %}
 ) {
     val uniffiObj = {{ cbi.handle_map_kt() }}.get(uniffiHandle)
-    {% for a in meth.callable.arguments %}
-    {%- if loop.first %}
-    val uniffiReader = FfiBufferCursor(uniffiBuffer)
-    {%- endif %}
-    val {{ a.name_kt() }} = {{ a.ty.read_fn_kt() }}(uniffiReader)
-    {%- endfor %}
+    {%- filter indent(4) %}{% include "LiftArgs.kt" %}{% endfilter %}
     {%- match meth.callable.throws_type() %}
     {%- when None %}
     val uniffiReturn = uniffiObj.{{ meth.callable.name_kt() }}(
@@ -35,7 +32,7 @@ fun {{ meth.dispatch_fn_kt }}(
         throw uniffi.CallbackException()
     }
     {%- endmatch %}
-    {% if let Some(return_ty) = meth.callable.return_type() %}
+    {%- if let Some(return_ty) = meth.callable.return_type() %}
     val uniffiWriter = FfiBufferCursor(uniffiBuffer)
     {{ return_ty.write_fn_kt() }}(uniffiWriter, uniffiReturn)
     {%- endif %}
@@ -44,15 +41,12 @@ fun {{ meth.dispatch_fn_kt }}(
 fun {{ meth.dispatch_fn_kt }}(
     uniffiHandle: Long,
     uniffiKotlinFutureHandle: Long,
-    uniffiBuffer: Long,
+    {%- if meth.callable.uses_buffer() %}
+    uniffiBuffer: Long
+    {%- endif %}
 ) {
     val uniffiObj = {{ cbi.handle_map_kt() }}.get(uniffiHandle)
-    {% for a in meth.callable.arguments %}
-    {%- if loop.first %}
-    val uniffiReader = FfiBufferCursor(uniffiBuffer)
-    {%- endif %}
-    val {{ a.name_kt() }} = {{ a.ty.read_fn_kt() }}(uniffiReader)
-    {%- endfor %}
+    {%- filter indent(4) %}{% include "LiftArgs.kt" %}{% endfilter %}
 
     // Using `GlobalScope` is labeled as a "delicate API" and generally discouraged in Kotlin programs, since it breaks structured concurrency.
     // However, our parent task is a Rust future, so we're going to need to break structure concurrency in any case.
@@ -82,7 +76,7 @@ fun {{ meth.dispatch_fn_kt }}(
             return@uniffiCoroutineBlock;
         }
         {%- endmatch %}
-        {% if let Some(return_ty) = meth.callable.return_type() %}
+        {%- if let Some(return_ty) = meth.callable.return_type() %}
         val uniffiWriter = FfiBufferCursor(uniffiBuffer)
         {{ return_ty.write_fn_kt() }}(uniffiWriter, uniffiReturn)
         {%- endif %}

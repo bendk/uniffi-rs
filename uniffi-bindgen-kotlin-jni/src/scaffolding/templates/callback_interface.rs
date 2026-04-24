@@ -16,17 +16,23 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
         {%- endfor %}
     ) -> {{ callable.result.return_type_rs() }} {
         uniffi::trace!("Callback call: {{ callable.name }}");
+        {%- if callable.uses_buffer() %}
         let mut uniffi_buf = uniffi::FfiBuffer::new();
         uniffi::trace!("{{ callable.name }}: new buffer {uniffi_buf:?}");
+        {%- endif %}
         let uniffi_result = {{ meth.dispatch_fn_rs }}(
             self.handle,
+            {%- if callable.uses_buffer() %}
             &mut uniffi_buf,
+            {%- endif %}
             {%- for a in callable.arguments %}
             {{ a.name_rs() }},
             {%- endfor %}
         ){% if callable.is_async %}.await{% endif %};
+        {%- if callable.uses_buffer() %}
         uniffi::trace!("{{ callable.name }}: free buffer {uniffi_buf:?}");
         uniffi_buf.free();
+        {%- endif %}
         match uniffi_result {
             Ok(v) => v,
             Err(e) => {
@@ -57,19 +63,14 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
 // Err returns represent an unexpected error, for example failure to lift arguments
 {% if callable.is_async %}async {% endif %}fn {{ meth.dispatch_fn_rs }}(
     uniffi_callback_handle: i64,
+    {%- if callable.uses_buffer() %}
     uniffi_buf: &mut uniffi::FfiBuffer,
+    {%- endif %}
     {%- for a in callable.arguments %}
     {{ a.name_rs() }}: {{ a.ty.type_rs }},
     {%- endfor %}
 ) -> uniffi::Result<{{ callable.result.return_type_rs() }}> {
-    {%- if !callable.arguments.is_empty() %}
-    uniffi_buf.with_cursor(|uniffi_writer| {
-        {%- for a in callable.arguments %}
-        {{ a.ty.write_fn_rs() }}(uniffi_writer, {{ a.name_rs() }})?;
-        {%- endfor %}
-        Ok(())
-    })?;
-    {%- endif %}
+    {% filter indent(4) %}{% include "lower_args.rs" %}{% endfilter %}
 
     {%- if !callable.is_async %}
     static METHOD: uniffi_jni::CachedStaticMethod = uniffi_jni::CachedStaticMethod::new(
@@ -87,26 +88,17 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                 uniffi_jni::jvalue {
                     j: uniffi_callback_handle,
                 },
+                {%- if callable.uses_buffer() %}
                 uniffi_jni::jvalue {
                     j: uniffi_buf.as_ptr().expose_provenance() as i64,
                 },
+                {%- endif %}
             ]);
 
             match uniffi_result {
                 Ok(()) => {
                     // Callback returned normally, read the return value
-                    {%- if let Some(return_ty) = callable.return_type() %}
-                    let uniffi_return = uniffi_buf.with_cursor(|uniffi_reader| {
-                        {{ return_ty.read_fn_rs() }}(uniffi_reader)
-                    })?;
-                    {%- else %}
-                    let uniffi_return = ();
-                    {%- endif %}
-                    {%- if callable.throws_type().is_some() %}
-                    Ok(Ok(uniffi_return))
-                    {%- else %}
-                    Ok(uniffi_return)
-                    {%- endif %}
+                    {% filter indent(20) %}{% include "lift_return.rs" %}{% endfilter %}
                 }
                 Err(uniffi_exc) => {
                     ((**uniffi_env).v1_2.ExceptionClear)(uniffi_env);
@@ -140,7 +132,9 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
     // * Closure panics won't cause `uniffi_buf` to be invalid
     // * We don't use the buffer while the Kotlin side has it
     unsafe {
+        {%- if callable.uses_buffer() %}
         let uniffi_buf_ptr = ::std::panic::AssertUnwindSafe(uniffi_buf.as_ptr().expose_provenance());
+        {%- endif %}
         uniffi_jni::attach_current_thread(uniffi_get_global_jvm(), move |uniffi_env| {
             if METHOD.call_void(uniffi_env, [
                 uniffi_jni::jvalue {
@@ -149,9 +143,11 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                 uniffi_jni::jvalue {
                     j: uniffi_sender.into_raw().expose_provenance() as i64,
                 },
+                {%- if callable.uses_buffer() %}
                 uniffi_jni::jvalue {
                     j: *uniffi_buf_ptr as i64
                 },
+                {%- endif %}
             ]).is_err() {
                 ((**uniffi_env).v1_2.ExceptionClear)(uniffi_env);
                 eprintln!("Exception calling {{ meth.dispatch_fn_kt }}");
@@ -160,18 +156,7 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
     }
     match uniffi_receiver.await {
         UNIFFI_KOTLIN_FUTURE_OK => {
-            {%- if let Some(return_ty) = callable.return_type() %}
-            let uniffi_return = uniffi_buf.with_cursor(|uniffi_reader| {
-                {{ return_ty.read_fn_rs() }}(uniffi_reader)
-            })?;
-            {%- else %}
-            let uniffi_return = ();
-            {%- endif %}
-            {%- if callable.throws_type().is_some() %}
-            Ok(Ok(uniffi_return))
-            {%- else %}
-            Ok(uniffi_return)
-            {%- endif %}
+            {% filter indent(12) %}{% include "lift_return.rs" %}{% endfilter %}
         }
         {%- if let Some(throws_type) = callable.throws_type() %}
         UNIFFI_KOTLIN_FUTURE_ERR => {
