@@ -17,15 +17,32 @@ The main reason is that we only want to parse the source code once.
 
 # FFI calling convention
 
-`uniffi-bindgen-kotin-jni` leverages the `uniffi::FfiBuffer` type to pass values across the FFI.
-All arguments and return values are written/read from the buffer.
+We use JNI to make FFI calls.
 
-For functions with arguments or return values:
+## FFI Buffers
+
+`uniffi-bindgen-kotin-jni` leverages the `uniffi::FfiBuffer` type to pass values across the FFI.
+When possible, we try to re-use the same buffer for arguments, return values, exception data, etc.
+
+FFI buffers are the baseline method for passing values.
+It's used as a fallback when we can't pass values as primitives.
+
+FFI buffers are managed using the following system:
 
 * The caller allocates the buffer
 * The caller passes the buffer handle to the callee.
 * The callee writes the return value to the same buffer, if there is one.
 * The caller frees the buffer
+
+## Primitive arguments / return values
+
+If possible, we try to pass arguments directly using JNI.
+This results in a significant speedup since it's faster to pass primitive values
+and sometimes we can avoid allocating a buffer altogether.
+
+The following types are passed as primitives:
+  * Integers, floats, and bool.  Unsigned ints are converted to their signed counterparts.
+  * `String` is passed as a `jstring` after a conversion step.
 
 # Errors/exceptions
 
@@ -36,6 +53,48 @@ Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
     * If not, then the callee allocates and frees a new buffer
 * Rust calls the Kotlin read method using JNI to construct the exception value
 * Rust then causes the current JNI function to throw.
+
+## How calls work
+
+### Sync calls
+
+* Define a function using JNI
+    * Rust functions are defined using specially-named `extern "system"` functions
+      Kotlin defines those as `extern` functions and JNI routes the calls to Rust.
+    * Kotlin functions are defined as package-level functions in the `uniffi` package.
+      Rust calls those functions using JNI.
+* The arguments are:
+    * FFI buffer handle (if needed)
+    * Primitive values for all primitive arguments
+* If the return type is a primitive type, then it's returned directly
+* If the return type uses the FFI buffer, then it's written to inputted buffer
+* Errors/unexpected error handling:
+    * Rust functions use the mechanism described in `Errors/Exceptions` to cause the function to throw
+    * Kotlin functions throw a `uniffi.CallbackError` method to signal an expected error
+      The Rust code catches this error and reads the error from the FFI buffer
+      All other Kotlin exceptions are treated as unexpected errors
+
+### Kotlin -> Rust async call
+
+* Kotlin calls a Rust function using JNI, passing all usual arguments
+* Rust returns a future handle
+* Kotlin calls a poll function on the future handle, passing it a continuation object
+    * If the future is pending, then the poll function stores the continuation
+    * When the future is woken up it then calls a Kotlin method to resume the continuation, restarting this loop
+* Once the future is ready, then the Kotlin function returns, completing the async call
+* If the future returns an error, or if there's an unexpected error,
+  then the Rust code causes the poll function to throw
+
+### Rust -> Rust async call
+
+* Rust creates a oneshot sender/receiver.
+* Rust calls the Kotlin function,
+  passing it a handle for the oneshot sender plus all the usual arguments
+* Rust awaits the oneshot receiver
+* When the Kotlin async function completes, it calls a Rust completion function
+  It passes that function the oneshot sender handle alongside any other data for the return
+* Rust sends the return value to the receiver, completing the async call
+* Rust defines separate completion functions to handle errors and unexpected errors
 
 # Kotlin `uniffi` package
 

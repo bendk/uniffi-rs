@@ -21,9 +21,15 @@ object Scaffolding {
     {%- for scaffolding_function in package.scaffolding_functions %}
     @JvmStatic external fun {{ scaffolding_function.jni_method_name }}(
         {%- if scaffolding_function.callable.uses_buffer() %}
-        uniffiBufferHandle: Long
+        uniffiBuffer: Long,
         {%- endif %}
-    ){% if scaffolding_function.callable.is_async %}: Long{% endif %}
+        {%- for ffi_arg in scaffolding_function.callable.ffi_arguments() %}
+        {{ ffi_arg.name_kt() }}: {{ ffi_arg.ty.type_kt() }},
+        {%- endfor %}
+    )
+        {%- if scaffolding_function.callable.is_async %}: Long
+        {%- elif let ReturnStrategy::Primitive(_, ffi_type) = scaffolding_function.callable.return_strategy() %}: {{ ffi_type.type_kt() }}
+        {%- endif %}
     {%- endfor %}
 
     {%- for cls in package.classes() %}
@@ -37,14 +43,47 @@ object Scaffolding {
     {%- endfor  %}
     {%- endfor  %}
 
-    @JvmStatic external fun uniffiRustFuturePoll(
+    {%- for rust_result in root.rust_async_callable_results() %}
+    @JvmStatic external fun {{ rust_result.async_poll_fn() }}(
         rustFuture: Long,
         continuation: kotlin.coroutines.Continuation<Int>,
+        {%- match rust_result.return_strategy() %}
+        {%- when ReturnStrategy::FfiBuffer(_) %}
+        uniffiBuffer: Long,
+        {%- when ReturnStrategy::Primitive(_, _) %}
+        completion: {{ rust_result.async_complete_class() }},
+        {%- when ReturnStrategy::Void %}
+        {%- endmatch %}
     ): Int
-    @JvmStatic external fun uniffiRustFutureFree(rustFuture: Long)
-    @JvmStatic external fun uniffiRustFutureCancel(rustFuture: Long)
+    @JvmStatic external fun {{ rust_result.async_cancel_fn() }}(rustFuture: Long)
+    @JvmStatic external fun {{ rust_result.async_free_fn() }}(rustFuture: Long)
+    {%- endfor %}
 
-    @JvmStatic external fun uniffiKotlinFutureComplete(kotlinFuture: Long, resultCode: Int)
+    {%- for callback_result in root.kotlin_async_callable_results() %}
+    @JvmStatic external fun {{ callback_result.async_complete_success_fn() }}(
+            kotlinFuture: Long,
+            {%- match callback_result.return_strategy() %}
+            {%- when ReturnStrategy::FfiBuffer(_) %}
+            buffer: Long,
+            {%- when ReturnStrategy::Primitive(_, ffi_type) %}
+            uniffiReturn: {{ ffi_type.type_kt() }},
+            {%- when ReturnStrategy::Void %}
+            {%- endmatch %}
+    )
+    {%- if let Some(throws_type) = callback_result.throws_type %}
+    @JvmStatic external fun {{ callback_result.async_complete_error_fn() }}(
+        kotlinFuture: Long,
+        {%- match throws_type.ffi_type %}
+        {%- when None %}
+        buffer: Long,
+        {%- when Some(return_ty_ffi_type) %}
+        error: {{ return_ty_ffi_type.type_kt() }},
+        {%- endmatch %}
+    )
+    {%- endif %}
+    @JvmStatic external fun {{ callback_result.async_complete_unexpected_error_fn() }}(kotlinFuture: Long)
+
+    {%- endfor %}
 
     // access `uniffiLibrary` to make sure the cdylib is loaded
     init {

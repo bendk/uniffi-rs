@@ -6,7 +6,6 @@ use std::panic::{catch_unwind, AssertUnwindSafe, UnwindSafe};
 
 use anyhow::Result;
 use jni_sys::JNIEnv;
-use uniffi::FfiBuffer;
 
 use crate::{throw_internal_exception, JniString};
 
@@ -58,18 +57,4 @@ where
             T::default()
         }
     }
-}
-
-/// Result from a RustFuture
-pub enum RustFutureResult {
-    // Successful return, the output is written to the FFI buffer
-    Ok,
-    // The `E` side of a Result
-    Err {
-        throw_fn: unsafe fn(*mut JNIEnv, *mut u8) -> Result<()>,
-        buf: FfiBuffer,
-        rust_frees_buf: bool,
-    },
-    // Unexpected error, for example failure to lower/lift a value
-    UnexpectedError,
 }

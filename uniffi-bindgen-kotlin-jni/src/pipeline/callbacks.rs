@@ -62,6 +62,16 @@ fn map_methods(
 ) -> Result<Vec<CallbackMethod>> {
     methods
         .map(|callable| {
+            let mut callable = callable.map_node(context)?;
+            callable.kind = match callable.kind {
+                CallableKind::VTableMethod { self_type, .. }
+                | CallableKind::Method { self_type, .. } => CallableKind::VTableMethod {
+                    self_type,
+                    for_callback_interface: true,
+                },
+                kind => bail!("callbacks::map_methods: invalid CallableKind: {kind:?}"),
+            };
+
             Ok(CallbackMethod {
                 dispatch_fn_rs: format!(
                     "uniffi_callback_dispatch_{}_{}_{}",
@@ -75,19 +85,52 @@ fn map_methods(
                     interface_name.to_upper_camel_case(),
                     callable.name.to_upper_camel_case(),
                 ),
-                callable: {
-                    let mut mapped = callable.map_node(context)?;
-                    mapped.kind = match mapped.kind {
-                        CallableKind::VTableMethod { self_type, .. }
-                        | CallableKind::Method { self_type, .. } => CallableKind::VTableMethod {
-                            self_type,
-                            for_callback_interface: true,
-                        },
-                        kind => bail!("callbacks::map_methods: invalid CallableKind: {kind:?}"),
-                    };
-                    mapped
-                },
+                jni_signature: jni_signature(&callable)?,
+                jni_method_call_name: jni_method_call_name(&callable)?,
+                callable,
             })
         })
         .collect()
+}
+
+fn jni_signature(callable: &Callable) -> Result<String> {
+    let mut args = String::from("J");
+    if callable.uses_buffer() {
+        args.push('J');
+    }
+    if callable.is_async {
+        args.push('J');
+    }
+    // Arg for each primitive arg
+    for a in callable.ffi_arguments() {
+        args.push_str(a.ty.jni_signature());
+    }
+
+    let ret = match (callable.is_async, callable.return_strategy()) {
+        (false, ReturnStrategy::Primitive(_, ffi_type)) => ffi_type.jni_signature(),
+        _ => "V",
+    };
+
+    Ok(format!("({args}){ret}"))
+}
+
+// Method name to make the call, for the `CachedMethod` and `CachedStaticMethod` types.
+fn jni_method_call_name(callable: &Callable) -> Result<String> {
+    Ok(match callable
+        .return_type()
+        .and_then(|type_node| type_node.ffi_type.as_ref())
+    {
+        Some(ffi_type) => match ffi_type {
+            FfiType::Int8 | FfiType::UInt8 => "call_byte",
+            FfiType::Int16 | FfiType::UInt16 => "call_short",
+            FfiType::Int32 | FfiType::UInt32 => "call_int",
+            FfiType::Int64 | FfiType::UInt64 => "call_long",
+            FfiType::Float32 => "call_float",
+            FfiType::Float64 => "call_double",
+            FfiType::Boolean => "call_boolean",
+            FfiType::String => "call_object",
+        },
+        _ => "call_void",
+    }
+    .into())
 }

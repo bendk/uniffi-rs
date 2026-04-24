@@ -1,0 +1,25 @@
+fun liftUByte(v: Byte): UByte = v.toUByte()
+fun liftByte(v: Byte): Byte = v
+fun liftUShort(v: Short): UShort = v.toUShort()
+fun liftShort(v: Short): Short = v
+fun liftUInt(v: Int): UInt = v.toUInt()
+fun liftInt(v: Int): Int = v
+fun liftULong(v: Long): ULong = v.toULong()
+fun liftLong(v: Long): Long = v
+fun liftFloat(v: Float): Float = v
+fun liftDouble(v: Double): Double = v
+fun liftBoolean(v: Boolean): Boolean = v
+fun liftString(v: String): String = v
+
+fun lowerUByte(v: UByte): Byte = v.toByte()
+fun lowerByte(v: Byte): Byte = v
+fun lowerUShort(v: UShort): Short = v.toShort()
+fun lowerShort(v: Short): Short = v
+fun lowerUInt(v: UInt): Int = v.toInt()
+fun lowerInt(v: Int): Int = v
+fun lowerULong(v: ULong): Long = v.toLong()
+fun lowerLong(v: Long): Long = v
+fun lowerFloat(v: Float): Float = v
+fun lowerDouble(v: Double): Double = v
+fun lowerBoolean(v: Boolean): Boolean = v
+fun lowerString(v: String): String = v

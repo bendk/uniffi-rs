@@ -7,17 +7,19 @@ mod callbacks;
 mod context;
 mod defaults;
 mod enums;
+mod ffitypes;
 mod interfaces;
 mod names;
 mod nodes;
 mod packages;
 mod records;
+mod root;
 mod types;
 
 use anyhow::{anyhow, bail, Result};
 use context::Context;
 use heck::{ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use uniffi_bindgen::pipeline::{general, initial};
 use uniffi_pipeline::{MapNode, Node, Pipeline};
 

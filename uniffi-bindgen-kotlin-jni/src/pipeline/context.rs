@@ -25,6 +25,7 @@ pub struct Context {
     pub current_namespace_name: Option<String>,
     pub current_enum: Option<general::Enum>,
     pub types_used_as_error: HashSet<Type>,
+    pub callable_result_id_map: IndexMap<(Option<Type>, Option<Type>), usize>,
 }
 
 impl Context {
@@ -53,6 +54,7 @@ impl Context {
             }
         });
         self.populate_type_id_map(root);
+        self.populate_callable_result_id_map(root)?;
         Ok(())
     }
 
@@ -63,6 +65,47 @@ impl Context {
                 self.type_id_map.insert(ty.clone(), counter.next().unwrap());
             }
         });
+    }
+
+    fn populate_callable_result_id_map(&mut self, root: &general::Root) -> Result<()> {
+        let mut map = IndexMap::new();
+        let mut counter = 0..;
+        root.visit(|callable: &general::Callable| {
+            map.entry((
+                callable
+                    .return_type
+                    .ty
+                    .as_ref()
+                    .map(|type_node| type_node.ty.clone()),
+                callable
+                    .throws_type
+                    .ty
+                    .as_ref()
+                    .map(|type_node| type_node.ty.clone()),
+            ))
+            .or_insert_with(|| counter.next().unwrap());
+        });
+        self.callable_result_id_map = map;
+        Ok(())
+    }
+
+    pub fn get_callback_result_id(&self, callable: &general::Callable) -> Result<usize> {
+        let key = (
+            callable
+                .return_type
+                .ty
+                .as_ref()
+                .map(|type_node| type_node.ty.clone()),
+            callable
+                .throws_type
+                .ty
+                .as_ref()
+                .map(|type_node| type_node.ty.clone()),
+        );
+        self.callable_result_id_map
+            .get(&key)
+            .cloned()
+            .ok_or_else(|| anyhow!("Callback result id not found for {callable:?}"))
     }
 
     fn type_module_paths(namespace: &general::Namespace) -> HashMap<String, String> {

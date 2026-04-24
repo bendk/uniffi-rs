@@ -1,12 +1,17 @@
-{%- if let Some(return_ty) = callable.return_type() %}
+{%- match return_strategy %}
+{%- when ReturnStrategy::FfiBuffer(return_type) %}
 let uniffi_return = uniffi_buf.with_cursor(|uniffi_reader| {
-    {{ return_ty.read_fn_rs() }}(uniffi_reader)
+    {{ return_type.read_fn_rs() }}(uniffi_reader)
 })?;
-{%- else %}
+{%- when ReturnStrategy::Primitive(type_node, _) %}
+let uniffi_return = {{ type_node.lift_fn_rs() }}(uniffi_env, uniffi_return)?;
+{%- when ReturnStrategy::Void %}
 let uniffi_return = ();
-{%- endif %}
-{%- if callable.throws_type().is_some() %}
-return Ok(Ok(uniffi_return));
+{%- endmatch %}
+
+{%- if throws_type.is_some() %}
+return ::std::result::Result::Ok(::std::result::Result::Ok(uniffi_return));
 {%- else %}
-return Ok(uniffi_return);
+return ::std::result::Result::Ok(uniffi_return);
 {%- endif %}
+

@@ -9,6 +9,8 @@ struct {{ cbi.impl_struct_rs() }} {
 impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
     {%- for meth in cbi.methods %}
     {%- let callable = meth.callable %}
+    {%- let return_type = callable.return_type() %}
+    {%- let throws_type = callable.throws_type() %}
     {% if callable.is_async %}async {% endif %}fn {{ callable.name_rs() }}(
         &self,
         {%- for a in callable.arguments %}
@@ -57,6 +59,9 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
 
 {%- for meth in cbi.methods %}
 {%- let callable = meth.callable %}
+{%- let return_strategy = callable.return_strategy() %}
+{%- let return_type = callable.return_type() %}
+{%- let throws_type = callable.throws_type() %}
 // Dispatch function for the {{ cbi.name }}::{{ callable.name }}
 //
 // Ok returns represent a regular call
@@ -70,21 +75,20 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
     {{ a.name_rs() }}: {{ a.ty.type_rs }},
     {%- endfor %}
 ) -> uniffi::Result<{{ callable.result.return_type_rs() }}> {
-    {% filter indent(4) %}{% include "lower_args.rs" %}{% endfilter %}
-
-    {%- if !callable.is_async %}
     static METHOD: uniffi_jni::CachedStaticMethod = uniffi_jni::CachedStaticMethod::new(
         c"uniffi/UniffiKt",
         c"{{ meth.dispatch_fn_kt }}",
-        c"(JJ)V",
+        c"{{ meth.jni_signature }}",
     );
+    {%- if !callable.is_async %}
     // Safety:
     //
     // * uniffi_get_global_jvm() returns a valid JavaVM pointer
     // * We use the JNI API correctly
     unsafe {
         uniffi_jni::attach_current_thread(uniffi_get_global_jvm(), |uniffi_env| {
-            let uniffi_result = METHOD.call_void(uniffi_env, [
+            {% filter indent(12) %}{% include "lower_args.rs" %}{% endfilter %}
+            let uniffi_result = METHOD.{{ meth.jni_method_call_name }}(uniffi_env, [
                 uniffi_jni::jvalue {
                     j: uniffi_callback_handle,
                 },
@@ -93,10 +97,15 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                     j: uniffi_buf.as_ptr().expose_provenance() as i64,
                 },
                 {%- endif %}
+                {%- for ffi_arg in callable.ffi_arguments() %}
+                uniffi_jni::jvalue {
+                    {{ ffi_arg.ty.jvalue_field() }}: {{ ffi_arg.name_rs() }},
+                },
+                {%- endfor %}
             ]);
 
             match uniffi_result {
-                Ok(()) => {
+                Ok(uniffi_return) => {
                     // Callback returned normally, read the return value
                     {% filter indent(20) %}{% include "lift_return.rs" %}{% endfilter %}
                 }
@@ -120,23 +129,19 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
     }
 
     {%- else %}
-    static METHOD: uniffi_jni::CachedStaticMethod = uniffi_jni::CachedStaticMethod::new(
-        c"uniffi/UniffiKt",
-        c"{{ meth.dispatch_fn_kt }}",
-        c"(JJJ)V",
-    );
-    let (uniffi_sender, uniffi_receiver) = uniffi::oneshot::channel::<i32>();
+    let (uniffi_sender, uniffi_receiver) = uniffi::oneshot::channel::<{{ callable.result.async_oneshot_type() }}>();
     // Safety:
     // * uniffi_get_global_jvm() returns a valid JavaVM pointer
     // * We use the JNI API correctly
     // * Closure panics won't cause `uniffi_buf` to be invalid
     // * We don't use the buffer while the Kotlin side has it
-    unsafe {
+     unsafe {
         {%- if callable.uses_buffer() %}
-        let uniffi_buf_ptr = ::std::panic::AssertUnwindSafe(uniffi_buf.as_ptr().expose_provenance());
+        let mut uniffi_buf = ::std::panic::AssertUnwindSafe(uniffi_buf);
         {%- endif %}
         uniffi_jni::attach_current_thread(uniffi_get_global_jvm(), move |uniffi_env| {
-            if METHOD.call_void(uniffi_env, [
+            {% filter indent(12) %}{% include "lower_args.rs" %}{% endfilter %}
+            METHOD.call_void(uniffi_env, [
                 uniffi_jni::jvalue {
                     j: uniffi_callback_handle,
                 },
@@ -145,29 +150,25 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                 },
                 {%- if callable.uses_buffer() %}
                 uniffi_jni::jvalue {
-                    j: *uniffi_buf_ptr as i64
+                    j: uniffi_buf.as_ptr().expose_provenance() as i64
                 },
                 {%- endif %}
-            ]).is_err() {
+                {%- for ffi_arg in callable.ffi_arguments() %}
+                uniffi_jni::jvalue {
+                    {{ ffi_arg.ty.jvalue_field() }}: {{ ffi_arg.name_rs() }},
+                },
+                {%- endfor %}
+            ]).map_err(|_| {
                 ((**uniffi_env).v1_2.ExceptionClear)(uniffi_env);
-                eprintln!("Exception calling {{ meth.dispatch_fn_kt }}");
-            }
-        });
-    }
-    match uniffi_receiver.await {
-        UNIFFI_KOTLIN_FUTURE_OK => {
-            {% filter indent(12) %}{% include "lift_return.rs" %}{% endfilter %}
-        }
-        {%- if let Some(throws_type) = callable.throws_type() %}
-        UNIFFI_KOTLIN_FUTURE_ERR => {
-            let uniffi_err = uniffi_buf.with_cursor(|uniffi_reader| {
-                {{ throws_type.read_fn_rs() }}(uniffi_reader)
-            })?;
-            Ok(Err(uniffi_err))
-        }
-        {%- endif %}
-        result => uniffi::deps::anyhow::bail!("Unexpected async callback result: {result}")
-    }
+                uniffi::deps::anyhow::anyhow!("Exception calling {{ meth.dispatch_fn_kt }}")
+            }).map(|_| {
+                // Return `uniffi_buf` back so that we can continue to use it in the code below.
+                // This allows us to continue to use the `&mut` after "moving" it into AssertUnwindSafe
+                uniffi_buf
+            })
+        })?
+    };
+    uniffi_receiver.await
     {%- endif %}
 }
 {%- endfor %}

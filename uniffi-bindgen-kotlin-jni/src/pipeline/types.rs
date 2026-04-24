@@ -14,6 +14,7 @@ pub fn map_type_node(type_node: general::TypeNode, context: &Context) -> Result<
             .type_id_map
             .get(&type_node.ty)
             .ok_or_else(|| anyhow!("Type missing from Context.type_id_map: {:?}", type_node.ty))?,
+        ffi_type: FfiType::for_primitive(&type_node.ty),
         ty: type_node.ty.map_node(context)?,
     })
 }
@@ -200,6 +201,48 @@ impl TypeNode {
         }
     }
 
+    /// Function to lower this type to a FFI type
+    ///
+    /// This is only defined for primitive types
+    pub fn lower_fn_rs(&self) -> String {
+        match &self.ty {
+            Type::Int8 => "uniffi_jni::lower_i8".into(),
+            Type::Int16 => "uniffi_jni::lower_i16".into(),
+            Type::Int32 => "uniffi_jni::lower_i32".into(),
+            Type::Int64 => "uniffi_jni::lower_i64".into(),
+            Type::UInt8 => "uniffi_jni::lower_u8".into(),
+            Type::UInt16 => "uniffi_jni::lower_u16".into(),
+            Type::UInt32 => "uniffi_jni::lower_u32".into(),
+            Type::UInt64 => "uniffi_jni::lower_u64".into(),
+            Type::Float32 => "uniffi_jni::lower_f32".into(),
+            Type::Float64 => "uniffi_jni::lower_f64".into(),
+            Type::Boolean => "uniffi_jni::lower_bool".into(),
+            Type::String => "uniffi_jni::lower_string".into(),
+            _ => self.fn_name_rs("lower"),
+        }
+    }
+
+    /// Function to lift a FFI type to this type
+    ///
+    /// This is only defined for primitive types
+    pub fn lift_fn_rs(&self) -> String {
+        match &self.ty {
+            Type::Int8 => "uniffi_jni::lift_i8".into(),
+            Type::Int16 => "uniffi_jni::lift_i16".into(),
+            Type::Int32 => "uniffi_jni::lift_i32".into(),
+            Type::Int64 => "uniffi_jni::lift_i64".into(),
+            Type::UInt8 => "uniffi_jni::lift_u8".into(),
+            Type::UInt16 => "uniffi_jni::lift_u16".into(),
+            Type::UInt32 => "uniffi_jni::lift_u32".into(),
+            Type::UInt64 => "uniffi_jni::lift_u64".into(),
+            Type::Float32 => "uniffi_jni::lift_f32".into(),
+            Type::Float64 => "uniffi_jni::lift_f64".into(),
+            Type::Boolean => "uniffi_jni::lift_bool".into(),
+            Type::String => "uniffi_jni::lift_string".into(),
+            _ => self.fn_name_rs("lift"),
+        }
+    }
+
     pub fn read_fn_kt(&self) -> String {
         match &self.ty {
             Type::UInt8 => "readUByte".into(),
@@ -233,6 +276,48 @@ impl TypeNode {
             Type::Boolean => "writeBool".into(),
             Type::String => "writeString".into(),
             _ => self.fn_name_kt("write"),
+        }
+    }
+
+    /// Function to lower this type to a FFI type
+    ///
+    /// This is only defined for primitive types
+    pub fn lower_fn_kt(&self) -> String {
+        match &self.ty {
+            Type::Int8 => "lowerByte".into(),
+            Type::Int16 => "lowerShort".into(),
+            Type::Int32 => "lowerInt".into(),
+            Type::Int64 => "lowerLong".into(),
+            Type::UInt8 => "lowerUByte".into(),
+            Type::UInt16 => "lowerUShort".into(),
+            Type::UInt32 => "lowerUInt".into(),
+            Type::UInt64 => "lowerULong".into(),
+            Type::Float32 => "lowerFloat".into(),
+            Type::Float64 => "lowerDouble".into(),
+            Type::Boolean => "lowerBoolean".into(),
+            Type::String => "lowerString".into(),
+            _ => self.fn_name_kt("lower"),
+        }
+    }
+
+    /// Function to lift a FFI type to this type
+    ///
+    /// This is only defined for primitive types
+    pub fn lift_fn_kt(&self) -> String {
+        match &self.ty {
+            Type::Int8 => "liftByte".into(),
+            Type::Int16 => "liftShort".into(),
+            Type::Int32 => "liftInt".into(),
+            Type::Int64 => "liftLong".into(),
+            Type::UInt8 => "liftUByte".into(),
+            Type::UInt16 => "liftUShort".into(),
+            Type::UInt32 => "liftUInt".into(),
+            Type::UInt64 => "liftULong".into(),
+            Type::Float32 => "liftFloat".into(),
+            Type::Float64 => "liftDouble".into(),
+            Type::Boolean => "liftBoolean".into(),
+            Type::String => "liftString".into(),
+            _ => self.fn_name_kt("lift"),
         }
     }
 
@@ -308,5 +393,9 @@ impl TypeNode {
 
     pub fn construct_fn_kt(&self) -> String {
         format!("construct{}", self.id)
+    }
+
+    pub fn uses_buffer(&self) -> bool {
+        self.ffi_type.is_none()
     }
 }

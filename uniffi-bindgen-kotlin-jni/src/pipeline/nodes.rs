@@ -14,10 +14,9 @@ uniffi_pipeline::use_prev_node!(general::Type);
 
 #[derive(Debug, Clone, Node, MapNode)]
 #[map_node(from(general::Root))]
-#[map_node(update_context(context.update_from_root(&self)?))]
+#[map_node(root::map_root)]
 pub struct Root {
     pub cdylib: Option<String>,
-    #[map_node(Vec::from_iter(self.namespaces.map_node(context)?.into_values()))]
     pub packages: Vec<Package>,
 }
 
@@ -145,6 +144,8 @@ pub struct CallbackInterface {
 #[derive(Debug, Clone, Node, MapNode)]
 pub struct CallbackMethod {
     pub callable: Callable,
+    pub jni_signature: String,
+    pub jni_method_call_name: String,
     pub dispatch_fn_rs: String,
     pub dispatch_fn_kt: String,
 }
@@ -259,6 +260,8 @@ pub struct Callable {
 pub struct CallableResult {
     pub return_type: Option<TypeNode>,
     pub throws_type: Option<TypeNode>,
+    // Unique ID for this CallableResult
+    pub id: usize,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -278,8 +281,13 @@ pub enum CallableKind {
     },
 }
 
+pub enum ReturnStrategy<'a> {
+    FfiBuffer(&'a TypeNode),
+    Primitive(&'a TypeNode, FfiType),
+    Void,
+}
+
 #[derive(Debug, Clone, Node, MapNode)]
-#[map_node(from(general::Argument))]
 pub struct Argument {
     pub name: String,
     pub orig_name: String,
@@ -287,6 +295,39 @@ pub struct Argument {
     pub by_ref: bool,
     pub optional: bool,
     pub default: Option<DefaultValueNode>,
+    pub strategy: ArgStrategy,
+}
+
+#[derive(Debug, Clone, Node)]
+pub enum ArgStrategy {
+    /// Argument passed via a FFI buffer
+    FfiBuffer,
+    /// Primitive type passed directly
+    Primitive(FfiArgument),
+}
+
+/// Argument on the JNI FFI function
+#[derive(Debug, Clone, Node, MapNode)]
+pub struct FfiArgument {
+    pub name: String,
+    pub ty: FfiType,
+}
+
+/// Type that's passed across the FFI using JNI
+#[derive(Debug, Clone, Copy, Node)]
+pub enum FfiType {
+    UInt8,
+    Int8,
+    UInt16,
+    Int16,
+    UInt32,
+    Int32,
+    UInt64,
+    Int64,
+    Float32,
+    Float64,
+    Boolean,
+    String,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -329,7 +370,9 @@ pub struct TypeNode {
     pub type_rs: String,
     /// Unique ID for this type node
     pub id: usize,
-    // Note: no ffi_type field, we have a very different FFI than the general IR
+    // FFI type, for primitive types
+    // Note: we use a very different ffi type from the general pipeline
+    pub ffi_type: Option<FfiType>,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -448,6 +491,26 @@ impl Root {
         throws_types.into_iter()
     }
 
+    pub fn rust_async_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
+        let mut unique_types = IndexMap::new();
+        self.visit(|callable: &Callable| {
+            if callable.is_async && callable.is_for_rust_function() {
+                unique_types.insert(callable.result.id, &callable.result);
+            }
+        });
+        unique_types.into_values()
+    }
+
+    pub fn kotlin_async_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
+        let mut unique_types = IndexMap::new();
+        self.visit(|callable: &Callable| {
+            if callable.is_async && callable.is_for_kotlin_function() {
+                unique_types.insert(callable.result.id, &callable.result);
+            }
+        });
+        unique_types.into_values()
+    }
+
     pub fn disable_java_cleaner(&self) -> bool {
         // Try to merge the different config values as best we can.
         // https://github.com/mozilla/uniffi-rs/issues/2866 would help here.
@@ -529,7 +592,14 @@ impl Callable {
                 Some(d) => format!("{}: {} = {}", a.name_kt(), a.ty.type_kt, d.default_kt),
             })
             .collect::<Vec<_>>()
-            .join(" , ")
+            .join(", ")
+    }
+
+    pub fn ffi_arguments(&self) -> impl Iterator<Item = &FfiArgument> {
+        self.arguments.iter().filter_map(|a| match &a.strategy {
+            ArgStrategy::Primitive(arg) => Some(arg),
+            _ => None,
+        })
     }
 
     /// Get an argument list without any defaults
@@ -561,7 +631,23 @@ impl Callable {
     }
 
     pub fn uses_buffer(&self) -> bool {
-        !self.arguments.is_empty() || self.has_receiver() || self.return_type().is_some()
+        if self.kind.is_callback_method() && !self.is_async && self.throws_type().is_some() {
+            // Sync callback methods currently always need to use buffer if they throw.
+            // TODO: remove this kludge.
+            return true;
+        }
+
+        self.arguments.iter().any(Argument::uses_buffer)
+            || self.has_receiver()
+            || self.return_type().is_some_and(|ty| ty.ffi_type.is_none())
+    }
+
+    pub fn return_strategy(&self) -> ReturnStrategy<'_> {
+        self.result.return_strategy()
+    }
+
+    pub fn has_ffi_buffer_arg(&self) -> bool {
+        self.arguments.iter().any(Argument::uses_buffer)
     }
 
     pub fn return_type(&self) -> Option<&TypeNode> {
@@ -590,6 +676,98 @@ impl CallableResult {
             None => "Unit",
             Some(ty) => &ty.type_kt,
         }
+    }
+
+    pub fn return_strategy(&self) -> ReturnStrategy<'_> {
+        match &self.return_type {
+            Some(type_node) => match &type_node.ffi_type {
+                Some(ffi_type) => ReturnStrategy::Primitive(type_node, *ffi_type),
+                _ => ReturnStrategy::FfiBuffer(type_node),
+            },
+            _ => ReturnStrategy::Void,
+        }
+    }
+
+    pub fn async_await_future_fn(&self) -> String {
+        format!("awaitRustFuture{}", self.id)
+    }
+
+    pub fn async_poll_fn(&self) -> String {
+        format!("rustFuturePoll{}", self.id)
+    }
+
+    pub fn async_cancel_fn(&self) -> String {
+        format!("rustFutureCancel{}", self.id)
+    }
+
+    pub fn async_free_fn(&self) -> String {
+        format!("rustFutureFree{}", self.id)
+    }
+
+    pub fn async_complete_class(&self) -> String {
+        format!("CompleteRustFuture{}", self.id)
+    }
+
+    pub fn async_complete_success_fn(&self) -> String {
+        format!("completeCallbackSuccess{}", self.id)
+    }
+
+    pub fn async_complete_error_fn(&self) -> String {
+        format!("completeCallbackError{}", self.id)
+    }
+
+    pub fn async_complete_unexpected_error_fn(&self) -> String {
+        format!("completeCallbackUnexpectedError{}", self.id)
+    }
+
+    /// oneshot Sender/Receiver generic type, for async callback functions
+    pub fn async_oneshot_type(&self) -> String {
+        let return_ty = self
+            .return_type
+            .as_ref()
+            .map(|type_node| &type_node.type_rs);
+        let throws_ty = self
+            .throws_type
+            .as_ref()
+            .map(|type_node| &type_node.type_rs);
+
+        let inner_type = match (return_ty, throws_ty) {
+            (Some(return_ty), Some(throws_ty)) => {
+                format!("::std::result::Result<{return_ty}, {throws_ty}>")
+            }
+            (Some(return_ty), None) => return_ty.clone(),
+            (None, Some(throws_ty)) => format!("::std::result::Result<(), {throws_ty}>"),
+            (None, None) => "()".into(),
+        };
+        // Wrap the normal result type in another Result<> to handle unexpected errors.
+        format!("uniffi::Result<{inner_type}>")
+    }
+
+    pub fn async_rust_future_output(&self) -> String {
+        let ok_type = match self.return_strategy() {
+            ReturnStrategy::Primitive(type_node, _) => &type_node.type_rs,
+            _ => "()",
+        };
+        let expected_result_type = if let Some(throws_type) = &self.throws_type {
+            let throws_type_rs = &throws_type.type_rs;
+            // For errors, we return the E type, plus the FFI buffer if the caller sent us one.
+            format!("::std::result::Result<{ok_type}, ({throws_type_rs}, ::std::option::Option<uniffi::FfiBuffer>)>")
+        } else {
+            ok_type.to_string()
+        };
+
+        // Everything gets wrapped in an anyhow::Result to handle unexpected errors
+        format!("uniffi::Result<{expected_result_type}>")
+    }
+}
+
+impl<'a> ReturnStrategy<'a> {
+    pub fn is_primitive(&self) -> bool {
+        matches!(&self, ReturnStrategy::Primitive(_, _))
+    }
+
+    pub fn is_ffi_buffer(&self) -> bool {
+        matches!(&self, ReturnStrategy::FfiBuffer(_))
     }
 }
 
@@ -788,6 +966,20 @@ impl Argument {
             (true, _) => format!("&{name}"),
             _ => name,
         }
+    }
+
+    pub fn uses_buffer(&self) -> bool {
+        matches!(self.strategy, ArgStrategy::FfiBuffer)
+    }
+}
+
+impl FfiArgument {
+    pub fn name_kt(&self) -> String {
+        format!("`{}`", self.name.to_lower_camel_case())
+    }
+
+    pub fn name_rs(&self) -> String {
+        names::escape_rust(&self.name)
     }
 }
 

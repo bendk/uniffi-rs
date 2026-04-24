@@ -1,0 +1,103 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+use super::*;
+
+impl FfiType {
+    /// Get the FFIType for a type -- if it's a primitive
+    pub fn for_primitive(ty: &Type) -> Option<Self> {
+        match ty {
+            Type::Int8 => Some(Self::Int8),
+            Type::Int16 => Some(Self::Int16),
+            Type::Int32 => Some(Self::Int32),
+            Type::Int64 => Some(Self::Int64),
+            Type::UInt8 => Some(Self::UInt8),
+            Type::UInt16 => Some(Self::UInt16),
+            Type::UInt32 => Some(Self::UInt32),
+            Type::UInt64 => Some(Self::UInt64),
+            Type::Float32 => Some(Self::Float32),
+            Type::Float64 => Some(Self::Float64),
+            Type::Boolean => Some(Self::Boolean),
+            Type::String => Some(Self::String),
+            _ => None,
+        }
+    }
+
+    pub fn type_kt(&self) -> String {
+        match self {
+            Self::Int8 => "Byte".into(),
+            Self::Int16 => "Short".into(),
+            Self::Int32 => "Int".into(),
+            Self::Int64 => "Long".into(),
+            // Unsigned types are always passed as their signed versions in Kotlin to since that's
+            // what JNI expects
+            Self::UInt8 => "Byte".into(),
+            Self::UInt16 => "Short".into(),
+            Self::UInt32 => "Int".into(),
+            Self::UInt64 => "Long".into(),
+            Self::Float32 => "Float".into(),
+            Self::Float64 => "Double".into(),
+            Self::Boolean => "Boolean".into(),
+            Self::String => "String".into(),
+        }
+    }
+
+    pub fn type_rs(&self) -> String {
+        match self {
+            Self::Int8 => "i8".into(),
+            Self::Int16 => "i16".into(),
+            Self::Int32 => "i32".into(),
+            Self::Int64 => "i64".into(),
+            // JNI only works with signed types
+            Self::UInt8 => "i8".into(),
+            Self::UInt16 => "i16".into(),
+            Self::UInt32 => "i32".into(),
+            Self::UInt64 => "i64".into(),
+            Self::Float32 => "f32".into(),
+            Self::Float64 => "f64".into(),
+            Self::Boolean => "bool".into(),
+            // JNI uses the `jstring` type, we convert to `String` in the lift/lower functions.
+            Self::String => "uniffi_jni::jstring".into(),
+        }
+    }
+
+    pub fn default_kt(&self) -> String {
+        match self {
+            Self::Int8 | Self::UInt8 => "0.toByte()".into(),
+            Self::Int16 | Self::UInt16 => "0.toShort()".into(),
+            Self::Int32 | Self::UInt32 => "0".into(),
+            Self::Int64 | Self::UInt64 => "0L".into(),
+            Self::Float32 => "0.0f".into(),
+            Self::Float64 => "0.0".into(),
+            Self::Boolean => "false".into(),
+            Self::String => "\"\"".into(),
+        }
+    }
+
+    pub fn jni_signature(&self) -> &'static str {
+        match self {
+            Self::UInt8 | Self::Int8 => "B",
+            Self::UInt16 | Self::Int16 => "S",
+            Self::UInt32 | Self::Int32 => "I",
+            Self::UInt64 | Self::Int64 => "J",
+            Self::Float32 => "F",
+            Self::Float64 => "D",
+            Self::Boolean => "Z",
+            Self::String => "Ljava/lang/String;",
+        }
+    }
+
+    pub fn jvalue_field(&self) -> &'static str {
+        match self {
+            Self::UInt8 | Self::Int8 => "b",
+            Self::UInt16 | Self::Int16 => "s",
+            Self::UInt32 | Self::Int32 => "i",
+            Self::UInt64 | Self::Int64 => "j",
+            Self::Float32 => "f",
+            Self::Float64 => "d",
+            Self::Boolean => "z",
+            Self::String => "l",
+        }
+    }
+}

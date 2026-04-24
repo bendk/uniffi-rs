@@ -1,14 +1,22 @@
 {%- let callable = scaffolding_function.callable %}
+{%- let return_type = callable.return_type() %}
+{%- let throws_type = callable.throws_type() %}
 {%- if !callable.is_async %}
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jni_method_name }}(
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
     {%- if callable.uses_buffer() %}uniffi_buf_handle: i64,{% endif %}
-) {
+    {%- for ffi_arg in callable.ffi_arguments() %}
+    {{ ffi_arg.name_rs() }}: {{ ffi_arg.ty.type_rs() }},
+    {%- endfor %}
+)
+{%- if let ReturnStrategy::Primitive(_, ffi_type) = callable.return_strategy() %} -> {{ ffi_type.type_rs() }}
+{%- endif %}
+{
     uniffi::trace!("Calling {{ callable.name }}");
     // Safety:
-    // * uniffi_env points to a valid JNIEnv
+    // * uniffi_env points to a valid JniEnv
     // * We assume the Kotlin side of the FFI sent us a valid buffer handle with arguments
     //   correctly serialized.
     unsafe {
@@ -69,12 +77,9 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
                     // Need to allocate a new buffer for the exception since we didn't input one
                     let mut uniffi_buf = uniffi::FfiBuffer::new();
                     {% endif %}
-                    uniffi_buf.with_cursor(|uniffi_writer| {
-                        {{ throws_ty.write_fn_rs() }}(uniffi_writer, uniffi_err)
-                    })?;
                     // Safety:
                     // `uniffi_buf` points to a valid FFI buffer
-                    unsafe { {{ throws_ty.throw_error_fn_rs() }}(uniffi_env, uniffi_buf.into_ptr())?; };
+                    unsafe { {{ throws_ty.throw_error_fn_rs() }}(uniffi_env, &mut uniffi_buf, uniffi_err)?; };
                     {%- if !callable.uses_buffer() %}
                     uniffi_buf.free();
                     {% endif %}
@@ -83,12 +88,20 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
             };
             {%- endif %}
 
-            {%- if let Some(return_ty) = callable.return_type() %}
+            {%- match callable.return_strategy() %}
+            {%- when ReturnStrategy::FfiBuffer(return_type) %}
             uniffi_buf.with_cursor(|uniffi_writer| {
-                {{ return_ty.write_fn_rs() }}(uniffi_writer, uniffi_return_value)
+                {{ return_type.write_fn_rs() }}(uniffi_writer, uniffi_return_value)
             })?;
+            {%- when ReturnStrategy::Primitive(type_node, _) %}
+            let uniffi_return_value = {{ type_node.lower_fn_rs() }}(uniffi_env, uniffi_return_value)?;
+            {%- when ReturnStrategy::Void %}
+            {%- endmatch %}
+            {%- if callable.return_strategy().is_primitive() %}
+            Ok(uniffi_return_value)
+            {%- else %}
+            Ok(())
             {%- endif %}
-            return Ok(());
         })
     }
 }
@@ -98,6 +111,9 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
     {%- if callable.uses_buffer() %}uniffi_buf_handle: i64,{% endif %}
+    {%- for ffi_arg in callable.ffi_arguments() %}
+    {{ ffi_arg.name_rs() }}: {{ ffi_arg.ty.type_rs() }},
+    {%- endfor %}
 ) -> i64 {
     uniffi::trace!("Calling {{ callable.name }}");
     // Safety:
@@ -130,39 +146,34 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
                 {%- if let Some(throws_ty) = callable.throws_type() %}
                 let uniffi_return_value = match uniffi_return_value {
                     Ok(v) => v,
-                    Err(uniffi_error) => {
-                        {%- if !callable.uses_buffer() %}
-                        // Need to allocate a new buffer for the exception since we didn't input one
-                        let mut uniffi_buf = uniffi::FfiBuffer::new();
-                        {%- endif %}
-                        uniffi_buf.with_cursor(|uniffi_writer| {
-                            {{ throws_ty.write_fn_rs() }}(uniffi_writer, uniffi_error)
-                        })?;
-                        return UniffiAnyhowResult::Ok(uniffi_jni::RustFutureResult::Err {
-                            throw_fn: {{ throws_ty.throw_error_fn_rs() }},
-                            buf: uniffi_buf,
-                            rust_frees_buf: {{ !callable.uses_buffer() }},
-                        })
+                    Err(uniffi_err) => {
+                        return UniffiAnyhowResult::Ok(::std::result::Result::Err((
+                            uniffi_err, 
+                            {%- if callable.uses_buffer() %}
+                            ::std::option::Option::Some(uniffi_buf)
+                            {%- else %}
+                            ::std::option::Option::<uniffi::FfiBuffer>::None,
+                            {%- endif %}
+                        )));
                     }
                 };
                 {%- endif %}
 
-                {%- if let Some(return_ty) = callable.return_type() %}
+                {%- if let Some(return_type) = callable.return_type() %}
+                {%- if return_type.uses_buffer() %}
                 uniffi_buf.with_cursor(|uniffi_writer| {
-                    {{ return_ty.write_fn_rs() }}(uniffi_writer, uniffi_return_value)
+                    {{ return_type.write_fn_rs() }}(uniffi_writer, uniffi_return_value)
                 })?;
+                let uniffi_return_value = ();
                 {%- endif %}
-                UniffiAnyhowResult::Ok(uniffi_jni::RustFutureResult::Ok)
+                {%- endif %}
+                {%- if callable.throws_type().is_none() %}
+                UniffiAnyhowResult::Ok(uniffi_return_value)
+                {%- else %}
+                UniffiAnyhowResult::Ok(::std::result::Result::Ok(uniffi_return_value))
+                {%- endif %}
             };
-            Ok(UniffiRustFuture::new(async move {
-                match uniffi_future.await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        eprintln!("Error in Rust future: {e}");
-                        uniffi_jni::RustFutureResult::UnexpectedError
-                    }
-                }
-            }).into_handle())
+            Ok(UniffiRustFuture::new(uniffi_future).into_handle())
         })
     }
 }

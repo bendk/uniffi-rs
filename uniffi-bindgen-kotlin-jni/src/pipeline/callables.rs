@@ -6,15 +6,18 @@ use super::*;
 
 pub fn map_callable(input: general::Callable, context: &Context) -> Result<Callable> {
     let fully_qualified_name_rs = fully_qualified_name_rs(&input, context)?;
+    let result_id = context.get_callback_result_id(&input)?;
+    let arguments = map_arguments(input.arguments, context)?;
     Ok(Callable {
         kind: input.kind.map_node(context)?,
         name: input.name,
         orig_name: input.orig_name,
         is_async: input.async_data.is_some(),
-        arguments: input.arguments.map_node(context)?,
+        arguments,
         result: CallableResult {
             return_type: input.return_type.ty.map_node(context)?,
             throws_type: input.throws_type.ty.map_node(context)?,
+            id: result_id,
         },
         fully_qualified_name_rs,
     })
@@ -102,4 +105,44 @@ pub fn method_jni_method_name(meth: &general::Method, context: &Context) -> Resu
         self_name.to_upper_camel_case(),
         meth.callable.name.to_upper_camel_case()
     ))
+}
+
+fn map_arguments(inputs: Vec<general::Argument>, context: &Context) -> Result<Vec<Argument>> {
+    let mut mapped = vec![];
+    let mut allocator = FfiArgAllocator::default();
+    for input in inputs {
+        let ty = input.ty.map_node(context)?;
+        let strategy = if let Some(ffi_type) = ty.ffi_type {
+            // Primitive type, we can pass these directly
+            ArgStrategy::Primitive(FfiArgument {
+                name: allocator.next(),
+                ty: ffi_type,
+            })
+        } else {
+            // The fallback is the FFI buffer
+            ArgStrategy::FfiBuffer
+        };
+        mapped.push(Argument {
+            name: input.name,
+            orig_name: input.orig_name,
+            ty,
+            by_ref: input.by_ref,
+            optional: input.optional,
+            default: input.default.map_node(context)?,
+            strategy,
+        });
+    }
+    Ok(mapped)
+}
+
+/// Generates argument names for FFI arguments that we're passing
+#[derive(Default)]
+pub struct FfiArgAllocator(usize);
+
+impl FfiArgAllocator {
+    pub fn next(&mut self) -> String {
+        let i = self.0;
+        self.0 += 1;
+        format!("uniffi_arg_{i}")
+    }
 }

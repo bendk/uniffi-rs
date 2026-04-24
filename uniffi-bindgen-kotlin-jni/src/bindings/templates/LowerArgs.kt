@@ -6,5 +6,10 @@ uniffi.{{ receiver_type.write_fn_kt() }}(uniffiWriter, this)
 {%- endif %}
 
 {%- for arg in callable.arguments %}
+{%- match arg.strategy %}
+{%- when ArgStrategy::Primitive(ffi_arg) %}
+val {{ ffi_arg.name_kt() }} = uniffi.{{ arg.ty.lower_fn_kt() }}({{ arg.name_kt() }})
+{%- when ArgStrategy::FfiBuffer %}
 uniffi.{{ arg.ty.write_fn_kt() }}(uniffiWriter, {{ arg.name_kt() }})
+{%- endmatch %}
 {%- endfor %}
