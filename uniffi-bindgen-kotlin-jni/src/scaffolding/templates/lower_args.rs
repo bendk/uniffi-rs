@@ -13,7 +13,12 @@ uniffi_buf.with_cursor(|uniffi_writer| {
 {%- match arg.strategy %}
 {%- when ArgStrategy::Primitive(ffi_arg) %}
 let {{ ffi_arg.name_rs() }} = {{ arg.ty.lower_fn_rs() }}(uniffi_env, {{ arg.name_rs() }})?;
+{%- when ArgStrategy::Deconstruct(ffi_args) %}
+let (
+    {%- for ffi_arg in ffi_args %}
+    {{ ffi_arg.name_rs() }},
+    {%- endfor %}
+) = {{ arg.ty.lower_fn_rs() }}(uniffi_env, {{ arg.name_rs() }})?;
 {%- else %}
 {%- endmatch %}
 {%- endfor %}
-

@@ -254,11 +254,16 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ callback_result.async_c
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
     future_handle: i64,
-    {%- if let Some(ffi_type) = throws_type.ffi_type %}
+    {%- match throws_type.lowerable %}
+    {%- when Some(LowerableType::Primitive(ffi_type)) %}
     error: {{ ffi_type.type_rs() }}
-    {%- else %}
+    {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
+    {%- for ffi_type in ffi_types %}
+    error_v{{ loop.index0 }}: {{ ffi_type.type_rs() }},
+    {%- endfor %}
+    {%- when None %}
     uniffi_buf_handle: i64,
-    {%- endif %}
+    {%- endmatch %}
 ) {
     uniffi::trace!("{{ callback_result.async_complete_error_fn() }}: {future_handle:x}");
     {%- if throws_type.uses_buffer() %}
@@ -274,13 +279,23 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ callback_result.async_c
             ::std::ptr::with_exposed_provenance::<_>(future_handle as usize)
         );
         let mut return_err = || {
-            {%- if let Some(ffi_type) = throws_type.ffi_type %}
+            {%- match throws_type.lowerable %}
+            {%- when Some(LowerableType::Primitive(_)) %}
             return ::std::result::Result::Ok(::std::result::Result::Err({{ throws_type.lift_fn_rs() }}(uniffi_env, error)?));
-            {%- else %}
+            {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
+            return  ::std::result::Result::Ok(::std::result::Result::Err(
+                {{ throws_type.lift_fn_rs() }}(
+                    uniffi_env,
+                    {%- for _ in ffi_types %}
+                    error_v{{ loop.index0 }},
+                    {%- endfor %}
+                )?
+            ));
+            {%- when None %}
             return ::std::result::Result::Ok(::std::result::Result::Err(uniffi_buf.with_cursor(|uniffi_reader| {
                 {{ throws_type.read_fn_rs() }}(uniffi_reader)
             })?));
-            {%- endif %}
+            {%- endmatch %}
         };
         sender.send(return_err());
     }

@@ -101,3 +101,83 @@ impl FfiType {
         }
     }
 }
+
+pub fn create_deconstructable_map(root: &general::Root) -> Result<HashMap<Type, Vec<FfiType>>> {
+    let records: HashMap<&Type, &general::Record> = root
+        .namespaces
+        .values()
+        .flat_map(|namespace| {
+            namespace
+                .type_definitions
+                .iter()
+                .filter_map(|type_def| match type_def {
+                    general::TypeDefinition::Record(rec) => Some((&rec.self_type.ty, rec)),
+                    _ => None,
+                })
+        })
+        .collect();
+
+    let mut context = CreateDeconstructableTypeContext {
+        deconstructable_types: HashMap::new(),
+        visited: HashSet::new(),
+        records,
+    };
+
+    root.try_visit(|ty: &Type| {
+        create_deconstructable_types_recurse(ty, &mut context)?;
+        Ok(())
+    })?;
+    Ok(context.deconstructable_types)
+}
+
+/// Context for `create_deconstructable_map_recurse`
+struct CreateDeconstructableTypeContext<'a> {
+    deconstructable_types: HashMap<Type, Vec<FfiType>>,
+    visited: HashSet<&'a Type>,
+    records: HashMap<&'a Type, &'a general::Record>,
+}
+
+fn create_deconstructable_types_recurse<'a>(
+    ty: &'a Type,
+    context: &mut CreateDeconstructableTypeContext<'a>,
+) -> Result<Option<Vec<FfiType>>> {
+    if let Some(deconstructable_type) = context.deconstructable_types.get(ty) {
+        return Ok(Some(deconstructable_type.clone()));
+    }
+    if !context.visited.insert(ty) {
+        // We've already visited this record and didn't insert it into the map.
+        // This means that either we've already determined there's no strategy
+        // or we've just detected a cycle in the dependency graph
+        // which means the type is not deconstructable.
+        return Ok(None);
+    }
+
+    let ffi_types = match ty {
+        Type::Record { .. } => {
+            let mut field_ffi_types = vec![];
+            let rec = context.records.get(ty).ok_or_else(|| {
+                anyhow!("create_deconstructable_types_recurse: missing record {ty:?}")
+            })?;
+            for f in rec.fields.iter() {
+                if let Some(ffi_type) = FfiType::for_primitive(&f.ty.ty) {
+                    // Primitive field
+                    field_ffi_types.push(ffi_type);
+                } else if let Some(child_primitives) =
+                    create_deconstructable_types_recurse(ty, context)?
+                {
+                    field_ffi_types.extend(child_primitives.iter());
+                } else {
+                    // Field can't be deconstructed, give up on this record
+                    return Ok(None);
+                }
+            }
+            field_ffi_types
+        }
+        // TODO handle more types
+        _ => return Ok(None),
+    };
+    context
+        .deconstructable_types
+        .insert(ty.clone(), ffi_types.clone());
+    Ok(Some(ffi_types))
+}

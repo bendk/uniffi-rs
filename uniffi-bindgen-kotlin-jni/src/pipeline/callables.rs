@@ -4,6 +4,9 @@
 
 use super::*;
 
+// Maximum number of arguments to use to pass primitive/deconstructable types
+const MAX_PRIMITIVE_ARGS: usize = 32;
+
 pub fn map_callable(input: general::Callable, context: &Context) -> Result<Callable> {
     let fully_qualified_name_rs = fully_qualified_name_rs(&input, context)?;
     let result_id = context.get_callback_result_id(&input)?;
@@ -112,15 +115,26 @@ fn map_arguments(inputs: Vec<general::Argument>, context: &Context) -> Result<Ve
     let mut allocator = FfiArgAllocator::default();
     for input in inputs {
         let ty = input.ty.map_node(context)?;
-        let strategy = if let Some(ffi_type) = ty.ffi_type {
-            // Primitive type, we can pass these directly
-            ArgStrategy::Primitive(FfiArgument {
-                name: allocator.next(),
-                ty: ffi_type,
-            })
-        } else {
-            // The fallback is the FFI buffer
-            ArgStrategy::FfiBuffer
+        let strategy = match &ty.lowerable {
+            Some(lowerable) => match (allocator.can_lower_args(lowerable), lowerable) {
+                (false, _) => ArgStrategy::FfiBuffer,
+                (true, LowerableType::Primitive(ffi_type)) => ArgStrategy::Primitive(FfiArgument {
+                    name: allocator.next(),
+                    ty: ffi_type.clone(),
+                }),
+                (true, LowerableType::Deconstructable(primitive_types)) => {
+                    ArgStrategy::Deconstruct(
+                        primitive_types
+                            .iter()
+                            .map(|ffi_type| FfiArgument {
+                                name: allocator.next(),
+                                ty: ffi_type.clone(),
+                            })
+                            .collect(),
+                    )
+                }
+            },
+            None => ArgStrategy::FfiBuffer,
         };
         mapped.push(Argument {
             name: input.name,
@@ -144,5 +158,14 @@ impl FfiArgAllocator {
         let i = self.0;
         self.0 += 1;
         format!("uniffi_arg_{i}")
+    }
+
+    pub fn can_lower_args(&self, lowerable: &LowerableType) -> bool {
+        match lowerable {
+            LowerableType::Primitive(_) => self.0 < MAX_PRIMITIVE_ARGS,
+            LowerableType::Deconstructable(ffi_types) => {
+                (self.0 + ffi_types.len()) <= MAX_PRIMITIVE_ARGS
+            }
+        }
     }
 }

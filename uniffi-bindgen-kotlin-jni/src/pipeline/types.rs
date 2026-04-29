@@ -5,6 +5,15 @@
 use super::*;
 
 pub fn map_type_node(type_node: general::TypeNode, context: &Context) -> Result<TypeNode> {
+    let lowerable = if let Some(primitive) = FfiType::for_primitive(&type_node.ty) {
+        Some(LowerableType::Primitive(primitive))
+    } else {
+        context
+            .deconstructable_type_map
+            .get(&type_node.ty)
+            .map(|primitives| LowerableType::Deconstructable(primitives.clone()))
+    };
+
     Ok(TypeNode {
         is_used_as_error: type_node.is_used_as_error,
         type_kt: type_kt(&type_node.ty, context)?,
@@ -14,8 +23,8 @@ pub fn map_type_node(type_node: general::TypeNode, context: &Context) -> Result<
             .type_id_map
             .get(&type_node.ty)
             .ok_or_else(|| anyhow!("Type missing from Context.type_id_map: {:?}", type_node.ty))?,
-        ffi_type: FfiType::for_primitive(&type_node.ty),
         ty: type_node.ty.map_node(context)?,
+        lowerable,
     })
 }
 
@@ -201,9 +210,11 @@ impl TypeNode {
         }
     }
 
-    /// Function to lower this type to a FFI type
+    /// Function to lower this type
     ///
-    /// This is only defined for primitive types
+    /// For primitive types, this converts this type into a single FfiType.
+    /// For deconstructable types, this converts this type into a multiple FfiTypes.
+    /// Otherwise, this function is not defined
     pub fn lower_fn_rs(&self) -> String {
         match &self.ty {
             Type::Int8 => "uniffi_jni::lower_i8".into(),
@@ -222,9 +233,11 @@ impl TypeNode {
         }
     }
 
-    /// Function to lift a FFI type to this type
+    /// Function to lift this type
     ///
-    /// This is only defined for primitive types
+    /// For primitive types, this converts a single FfiType into this type.
+    /// For deconstructable types, this converts multiple FfiTypes into this type.
+    /// Otherwise, this function is not defined
     pub fn lift_fn_rs(&self) -> String {
         match &self.ty {
             Type::Int8 => "uniffi_jni::lift_i8".into(),
@@ -279,9 +292,11 @@ impl TypeNode {
         }
     }
 
-    /// Function to lower this type to a FFI type
+    /// Function to lower this type
     ///
-    /// This is only defined for primitive types
+    /// For primitive types, this converts this type into a single FfiType.
+    /// For deconstructable types, this converts this type into a multiple FfiTypes.
+    /// Otherwise, this function is not defined
     pub fn lower_fn_kt(&self) -> String {
         match &self.ty {
             Type::Int8 => "lowerByte".into(),
@@ -300,9 +315,11 @@ impl TypeNode {
         }
     }
 
-    /// Function to lift a FFI type to this type
+    /// Function to lift this type
     ///
-    /// This is only defined for primitive types
+    /// For primitive types, this converts a single FfiType into this type.
+    /// For deconstructable types, this converts multiple FfiTypes into this type.
+    /// Otherwise, this function is not defined
     pub fn lift_fn_kt(&self) -> String {
         match &self.ty {
             Type::Int8 => "liftByte".into(),
@@ -319,6 +336,13 @@ impl TypeNode {
             Type::String => "liftString".into(),
             _ => self.fn_name_kt("lift"),
         }
+    }
+
+    /// Kotlin type that the deconstruct function returns in Kotlin
+    ///
+    /// This is a tuple-like class, where all fields are named `v{index}`
+    pub fn deconstructed_type_kt(&self) -> String {
+        format!("DeconstructedType{}", self.id)
     }
 
     /// Generate a standard Rust function name
@@ -396,6 +420,6 @@ impl TypeNode {
     }
 
     pub fn uses_buffer(&self) -> bool {
-        self.ffi_type.is_none()
+        self.lowerable.is_none()
     }
 }

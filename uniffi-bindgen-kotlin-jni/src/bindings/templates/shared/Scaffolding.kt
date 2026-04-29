@@ -73,11 +73,15 @@ object Scaffolding {
     {%- if let Some(throws_type) = callback_result.throws_type %}
     @JvmStatic external fun {{ callback_result.async_complete_error_fn() }}(
         kotlinFuture: Long,
-        {%- match throws_type.ffi_type %}
+        {%- match throws_type.lowerable %}
+        {%- when Some(LowerableType::Primitive(ffi_type)) %}
+        error: {{ ffi_type.type_kt() }},
+        {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
+        {%- for ffi_type in ffi_types %}
+        errorV{{ loop.index0 }}: {{ ffi_type.type_kt() }},
+        {%- endfor %}
         {%- when None %}
         buffer: Long,
-        {%- when Some(return_ty_ffi_type) %}
-        error: {{ return_ty_ffi_type.type_kt() }},
         {%- endmatch %}
     )
     {%- endif %}

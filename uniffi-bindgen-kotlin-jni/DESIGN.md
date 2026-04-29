@@ -25,7 +25,7 @@ We use JNI to make FFI calls.
 When possible, we try to re-use the same buffer for arguments, return values, exception data, etc.
 
 FFI buffers are the baseline method for passing values.
-It's used as a fallback when we can't pass values as primitives.
+It's used as a fallback when we can't pass values as primitives or deconstruct them.
 
 FFI buffers are managed using the following system:
 
@@ -43,6 +43,17 @@ and sometimes we can avoid allocating a buffer altogether.
 The following types are passed as primitives:
   * Integers, floats, and bool.  Unsigned ints are converted to their signed counterparts.
   * `String` is passed as a `jstring` after a conversion step.
+
+## Deconstructing composite types
+
+If we can't pass types as primitives,
+the next step is to try deconstructing the type into a fixed set of primitive values.
+The primitive values are then passed as multiple FFI arguments.
+
+We currently support this for:
+  * Records where all fields are primitive or deconstructable.
+
+Note: even if a type is deconstructable, we currently still need to return it using a FFI buffer.
 
 # Errors/exceptions
 
@@ -65,7 +76,7 @@ Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
       Rust calls those functions using JNI.
 * The arguments are:
     * FFI buffer handle (if needed)
-    * Primitive values for all primitive arguments
+    * Primitive values for all primitive/deconstructable arguments
 * If the return type is a primitive type, then it's returned directly
 * If the return type uses the FFI buffer, then it's written to inputted buffer
 * Errors/unexpected error handling:

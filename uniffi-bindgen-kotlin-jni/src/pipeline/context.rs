@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::collections::{HashMap, HashSet};
-
 use super::*;
 
 #[derive(Default, Clone)]
@@ -26,6 +24,8 @@ pub struct Context {
     pub current_enum: Option<general::Enum>,
     pub types_used_as_error: HashSet<Type>,
     pub callable_result_id_map: IndexMap<(Option<Type>, Option<Type>), usize>,
+    // FFI types for deconstructable types
+    pub deconstructable_type_map: HashMap<Type, Vec<FfiType>>,
 }
 
 impl Context {
@@ -55,6 +55,7 @@ impl Context {
         });
         self.populate_type_id_map(root);
         self.populate_callable_result_id_map(root)?;
+        self.deconstructable_type_map = ffitypes::create_deconstructable_map(root)?;
         Ok(())
     }
 

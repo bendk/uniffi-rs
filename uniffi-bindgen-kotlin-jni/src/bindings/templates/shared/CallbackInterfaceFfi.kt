@@ -12,10 +12,8 @@ fun {{ meth.dispatch_fn_kt }}(
     {%- if callable.uses_buffer() %}
     uniffiBuffer: Long,
     {%- endif %}
-    {%- for arg in callable.arguments %}
-    {%- if let ArgStrategy::Primitive(ffi_arg) = arg.strategy %}
+    {%- for ffi_arg in callable.ffi_arguments() %}
     {{ ffi_arg.name_kt() }}: {{ ffi_arg.ty.type_kt() }},
-    {%- endif %}
     {%- endfor %}
 )
 {%- if let ReturnStrategy::Primitive(_, ffi_type) = callable.return_strategy() %}: {{ ffi_type.type_kt() }}
@@ -59,10 +57,8 @@ fun {{ meth.dispatch_fn_kt }}(
     {%- if callable.uses_buffer() %}
     uniffiBuffer: Long,
     {%- endif %}
-    {%- for arg in callable.arguments %}
-    {%- if let ArgStrategy::Primitive(ffi_arg) = arg.strategy %}
+    {%- for ffi_arg in callable.ffi_arguments() %}
     {{ ffi_arg.name_kt() }}: {{ ffi_arg.ty.type_kt() }},
-    {%- endif %}
     {%- endfor %}
 ) {
     val uniffiObj = {{ cbi.handle_map_kt() }}.get(uniffiHandle)
@@ -81,7 +77,6 @@ fun {{ meth.dispatch_fn_kt }}(
                 {{ a.name_kt() }},
                 {%- endfor %}
             )
-
             {%- match callable.return_strategy() %}
             {%- when ReturnStrategy::FfiBuffer(return_type) %}
             val uniffiWriter = FfiBufferCursor(uniffiBuffer)
@@ -101,14 +96,23 @@ fun {{ meth.dispatch_fn_kt }}(
                     val uniffiBuffer = uniffi.Scaffolding.ffiBufferNew()
                     try {
                     {%- endif %}
-                        {%- if throws_type.ffi_type.is_some() %}
+                        {%- match throws_type.lowerable %}
+                        {%- when Some(LowerableType::Primitive(_)) %}
                         val uniffiErrLowered = {{ throws_type.lower_fn_kt() }}(uniffiErr)
                         Scaffolding.{{ callable.result.async_complete_error_fn() }}(uniffiKotlinFutureHandle, uniffiErrorLowered)
-                        {%- else %}
+                        {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
+                        val uniffiErrDeconstructed = {{ throws_type.lower_fn_kt() }}(uniffiErr)
+                        Scaffolding.{{ callable.result.async_complete_error_fn() }}(
+                            uniffiKotlinFutureHandle, 
+                            {%- for _ in ffi_types %}
+                            uniffiErrDeconstructed.v{{ loop.index0 }},
+                            {%- endfor %}
+                        )
+                        {%- when None %}
                         val uniffiWriter = FfiBufferCursor(uniffiBuffer)
                         {{ throws_type.write_fn_kt() }}(uniffiWriter, uniffiErr)
                         Scaffolding.{{ callable.result.async_complete_error_fn() }}(uniffiKotlinFutureHandle, uniffiBuffer)
-                        {%- endif %}
+                        {%- endmatch %}
                     {%- if throws_type.uses_buffer() && !callable.uses_buffer() %}
                     } finally {
                         uniffi.Scaffolding.ffiBufferFree(uniffiBuffer)

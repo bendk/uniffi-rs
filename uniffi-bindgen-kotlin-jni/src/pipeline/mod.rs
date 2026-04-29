@@ -16,6 +16,8 @@ mod records;
 mod root;
 mod types;
 
+use std::collections::{HashMap, HashSet};
+
 use anyhow::{anyhow, bail, Result};
 use context::Context;
 use heck::{ToLowerCamelCase, ToShoutySnakeCase, ToSnakeCase, ToUpperCamelCase};

@@ -159,14 +159,14 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
                 };
                 {%- endif %}
 
-                {%- if let Some(return_type) = callable.return_type() %}
-                {%- if return_type.uses_buffer() %}
+                {%- match callable.return_strategy() %}
+                {%- when ReturnStrategy::FfiBuffer(return_type) %}
                 uniffi_buf.with_cursor(|uniffi_writer| {
                     {{ return_type.write_fn_rs() }}(uniffi_writer, uniffi_return_value)
                 })?;
                 let uniffi_return_value = ();
-                {%- endif %}
-                {%- endif %}
+                {%- else %}
+                {%- endmatch %}
                 {%- if callable.throws_type().is_none() %}
                 UniffiAnyhowResult::Ok(uniffi_return_value)
                 {%- else %}

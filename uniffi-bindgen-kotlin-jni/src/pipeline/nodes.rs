@@ -53,18 +53,18 @@ pub enum TypeDefinition {
 
 #[derive(Debug, Clone, Node, MapNode)]
 #[map_node(from(general::Record))]
+#[map_node(records::map_record)]
 pub struct Record {
     pub fields_kind: FieldsKind,
     pub self_type: TypeNode,
-    #[map_node(context.config()?.record_is_immutable(&self.name))]
     pub immutable: bool,
     pub name: String,
     pub orig_name: String,
     pub uniffi_trait_methods: UniffiTraitMethods,
-    #[map_node(records::map_fields(self.fields, context)?)]
     pub fields: Vec<Field>,
     pub docstring: Option<String>,
     pub recursive: bool,
+    pub deconstructable: Option<DeconstructableRecord>,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -302,14 +302,61 @@ pub struct Argument {
 pub enum ArgStrategy {
     /// Argument passed via a FFI buffer
     FfiBuffer,
-    /// Primitive type passed directly
+    /// Primitive type passed as a JNI argument
     Primitive(FfiArgument),
+    /// Deconstructable type that's passed as multiple JNI arguments
+    Deconstruct(Vec<FfiArgument>),
 }
 
 /// Argument on the JNI FFI function
 #[derive(Debug, Clone, Node, MapNode)]
 pub struct FfiArgument {
     pub name: String,
+    pub ty: FfiType,
+}
+
+/// Type that can lowered and passed across the FFI
+#[derive(Debug, Clone, Node)]
+pub enum LowerableType {
+    /// Primitive type can be lowered and passed directly using JNI
+    Primitive(FfiType),
+    /// High-level type can be deconstructed into multiple primitive types.
+    Deconstructable(Vec<FfiType>),
+}
+
+/// Record that can be deconstructed into primitive values
+#[derive(Debug, Clone, Node)]
+pub struct DeconstructableRecord {
+    /// Fields of the high-level type with info on how to lift/lower them.
+    pub source_fields: Vec<DeconstructableField>,
+}
+
+/// Field of a deconstructable type
+///
+/// This represents the field of the high-level type, which gets mapped to multiple FFI fields.
+#[derive(Debug, Clone, Node)]
+pub struct DeconstructableField {
+    pub name: String,
+    pub orig_name: String,
+    pub index: usize,
+    pub ty: TypeNode,
+    pub kind: DeconstructableFieldKind,
+}
+
+#[derive(Debug, Clone, Node)]
+pub enum DeconstructableFieldKind {
+    // Primitive type
+    Primitive(FfiField),
+    // Type that we should recursively deconstruct
+    Recursive(Vec<FfiField>),
+}
+
+/// Field of a lowered type
+///
+/// This represents the field of the high-level type, which gets mapped to multiple FFI fields.
+#[derive(Debug, Clone, Node)]
+pub struct FfiField {
+    pub index: usize,
     pub ty: FfiType,
 }
 
@@ -370,9 +417,8 @@ pub struct TypeNode {
     pub type_rs: String,
     /// Unique ID for this type node
     pub id: usize,
-    // FFI type, for primitive types
-    // Note: we use a very different ffi type from the general pipeline
-    pub ffi_type: Option<FfiType>,
+    // Extra info for lowerable types
+    pub lowerable: Option<LowerableType>,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -596,10 +642,15 @@ impl Callable {
     }
 
     pub fn ffi_arguments(&self) -> impl Iterator<Item = &FfiArgument> {
-        self.arguments.iter().filter_map(|a| match &a.strategy {
-            ArgStrategy::Primitive(arg) => Some(arg),
-            _ => None,
-        })
+        let mut ffi_args = vec![];
+        for a in self.arguments.iter() {
+            match &a.strategy {
+                ArgStrategy::Primitive(arg) => ffi_args.push(arg),
+                ArgStrategy::Deconstruct(args) => ffi_args.extend(args),
+                _ => (),
+            }
+        }
+        ffi_args.into_iter()
     }
 
     /// Get an argument list without any defaults
@@ -639,7 +690,9 @@ impl Callable {
 
         self.arguments.iter().any(Argument::uses_buffer)
             || self.has_receiver()
-            || self.return_type().is_some_and(|ty| ty.ffi_type.is_none())
+            || self
+                .return_type()
+                .is_some_and(|ty| !matches!(ty.lowerable, Some(LowerableType::Primitive(_))))
     }
 
     pub fn return_strategy(&self) -> ReturnStrategy<'_> {
@@ -680,9 +733,15 @@ impl CallableResult {
 
     pub fn return_strategy(&self) -> ReturnStrategy<'_> {
         match &self.return_type {
-            Some(type_node) => match &type_node.ffi_type {
-                Some(ffi_type) => ReturnStrategy::Primitive(type_node, *ffi_type),
-                _ => ReturnStrategy::FfiBuffer(type_node),
+            Some(type_node) => match &type_node.lowerable {
+                Some(LowerableType::Primitive(ffi_type)) => {
+                    ReturnStrategy::Primitive(type_node, *ffi_type)
+                }
+                Some(LowerableType::Deconstructable(_ffi_types)) => {
+                    // We don't support deconstructing return values yet
+                    ReturnStrategy::FfiBuffer(type_node)
+                }
+                None => ReturnStrategy::FfiBuffer(type_node),
             },
             _ => ReturnStrategy::Void,
         }
@@ -970,6 +1029,52 @@ impl Argument {
 
     pub fn uses_buffer(&self) -> bool {
         matches!(self.strategy, ArgStrategy::FfiBuffer)
+    }
+}
+
+impl LowerableType {
+    pub fn ffi_types(&self) -> Vec<&FfiType> {
+        match self {
+            LowerableType::Primitive(ffi_type) => vec![ffi_type],
+            LowerableType::Deconstructable(ffi_types) => ffi_types.iter().collect(),
+        }
+    }
+
+    pub fn is_deconstructable(&self) -> bool {
+        matches!(self, LowerableType::Deconstructable(_))
+    }
+}
+
+impl DeconstructableRecord {
+    pub fn ffi_types(&self) -> Vec<&FfiType> {
+        let mut ffi_types = vec![];
+        for f in self.source_fields.iter() {
+            match &f.kind {
+                DeconstructableFieldKind::Primitive(f) => ffi_types.push(&f.ty),
+                DeconstructableFieldKind::Recursive(fs) => {
+                    ffi_types.extend(fs.iter().map(|f| &f.ty))
+                }
+            }
+        }
+        ffi_types
+    }
+}
+
+impl DeconstructableField {
+    pub fn is_recursive(&self) -> bool {
+        matches!(&self.kind, DeconstructableFieldKind::Recursive(_))
+    }
+
+    pub fn name_kt(&self) -> String {
+        if self.name.is_empty() {
+            format!("v{}", self.index + 1)
+        } else {
+            format!("`{}`", self.name.to_lower_camel_case())
+        }
+    }
+
+    pub fn name_rs(&self) -> String {
+        names::escape_rust(&self.orig_name.to_snake_case())
     }
 }
 

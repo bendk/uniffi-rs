@@ -21,7 +21,16 @@ let (
 {%- endif %}
 
 {%- for arg in callable.arguments %}
-{%- if let ArgStrategy::Primitive(ffi_arg) = arg.strategy %}
+{%- match arg.strategy %}
+{%- when ArgStrategy::Primitive(ffi_arg) %}
 let {{ arg.name_rs() }} = {{ arg.ty.lift_fn_rs() }}(uniffi_env, {{ ffi_arg.name_rs() }})?;
-{%- endif %}
+{%- when ArgStrategy::Deconstruct(ffi_args) %}
+let {{ arg.name_rs() }} = {{ arg.ty.lift_fn_rs() }}(
+    uniffi_env,
+    {%- for ffi_arg in ffi_args %}
+    {{ ffi_arg.name_rs() }},
+    {%- endfor %}
+)?;
+{%- when ArgStrategy::FfiBuffer %}
+{%- endmatch %}
 {%- endfor %}

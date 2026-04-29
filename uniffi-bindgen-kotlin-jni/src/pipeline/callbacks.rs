@@ -118,9 +118,9 @@ fn jni_signature(callable: &Callable) -> Result<String> {
 fn jni_method_call_name(callable: &Callable) -> Result<String> {
     Ok(match callable
         .return_type()
-        .and_then(|type_node| type_node.ffi_type.as_ref())
+        .and_then(|type_node| type_node.lowerable.as_ref())
     {
-        Some(ffi_type) => match ffi_type {
+        Some(LowerableType::Primitive(ffi_type)) => match ffi_type {
             FfiType::Int8 | FfiType::UInt8 => "call_byte",
             FfiType::Int16 | FfiType::UInt16 => "call_short",
             FfiType::Int32 | FfiType::UInt32 => "call_int",
