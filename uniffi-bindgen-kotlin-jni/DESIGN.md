@@ -44,7 +44,7 @@ The following types are passed as primitives:
   * Integers, floats, and bool.  Unsigned ints are converted to their signed counterparts.
   * `String` is passed as a `jstring` after a conversion step.
 
-## Deconstructing composite types
+## Deconstructable types
 
 If we can't pass types as primitives,
 the next step is to try deconstructing the type into a fixed set of primitive values.
@@ -53,59 +53,100 @@ The primitive values are then passed as multiple FFI arguments.
 We currently support this for:
   * Records where all fields are primitive or deconstructable.
 
-Note: even if a type is deconstructable, we currently still need to return it using a FFI buffer.
-
 # Errors/exceptions
 
 Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
 
-* Rust writes the error value to a FFI buffer
-    * For functions that require a buffer for the arguments/return values, this buffer is re-used.
-    * If not, then the callee allocates and frees a new buffer
+* Rust calls a Kotlin function to create the exception instance.
+   * For deconstructable types, Rust passes all the primitive values.
+   * For other types, Rust writes the error value to a FFI buffer.
+       * For functions that require a buffer for the arguments/return values, this buffer is re-used.
+       * If not, then the callee allocates and frees a new buffer
 * Rust calls the Kotlin read method using JNI to construct the exception value
 * Rust then causes the current JNI function to throw.
 
 ## How calls work
 
-### Sync calls
+### Kotlin -> Rust sync call
 
-* Define a function using JNI
-    * Rust functions are defined using specially-named `extern "system"` functions
-      Kotlin defines those as `extern` functions and JNI routes the calls to Rust.
-    * Kotlin functions are defined as package-level functions in the `uniffi` package.
-      Rust calls those functions using JNI.
-* The arguments are:
+* FFI arguments:
     * FFI buffer handle (if needed)
     * Primitive values for all primitive/deconstructable arguments
-* If the return type is a primitive type, then it's returned directly
-* If the return type uses the FFI buffer, then it's written to inputted buffer
+* Returning values:
+    * Primitive types are returned directly
+    * Deconstructable types:
+        * Deconstructed the value into primitives
+        * Pass the primitives to the Kotlin lift function via JNI, getting back a `jobject`.
+        * Return the resulting `jobject` back to Kotlin.
+    * Otherwise, Rust inputs a FFI buffer handle and writes the return value to it
+* Error handling: Rust constructs and throws an exception as described in `Errors/exceptions`
+
+### Rust -> Kotlin sync calls
+
+* FFI arguments:
+    * FFI buffer handle (if needed)
+    * Primitive values for all primitive/deconstructable arguments
+    * If the return value is deconstructable,
+      pass a pointer to a stack-allocated `Option<T>` value.
+* Returning values:
+    * Primitive types are returned directly
+    * Deconstructable types:
+        * Deconstructed the value into primitives
+        * Pass the primitives alongside the `Option` pointer to a Rust JNI function.
+        * The Rust function initializes the `Option` from the primitives.
+        * The Kotlin function returns void, then the Rust function unwraps and returns the `Option` value.
+    * Otherwise, Rust inputs a FFI buffer handle and writes the return value to it
 * Errors/unexpected error handling:
-    * Rust functions use the mechanism described in `Errors/Exceptions` to cause the function to throw
-    * Kotlin functions throw a `uniffi.CallbackError` method to signal an expected error
-      The Rust code catches this error and reads the error from the FFI buffer
-      All other Kotlin exceptions are treated as unexpected errors
+    * Expected errors (the `E` side of a Result) are handled the like a regular return,
+      they just call a different JNI function.
+    * For unexpected errors, Kotlin throws an exception and Rust catches it
 
 ### Kotlin -> Rust async call
 
-* Kotlin calls a Rust function using JNI, passing all usual arguments
-* Rust returns a future handle
-* Kotlin calls a poll function on the future handle, passing it a continuation object
+* FFI arguments:
+    * FFI buffer handle (if needed)
+    * Primitive values for all primitive/deconstructable arguments
+* FFI function return value: Rust future handle
+* Kotlin calls a poll function, until the future is ready
+    * Kotlin calls a poll function with the future handle, passing it a continuation object
+    * If the future is ready, the function returns `UNIFFI_RUST_FUTURE_COMPLETE`
+      and we move to the next step.
     * If the future is pending, then the poll function stores the continuation
     * When the future is woken up it then calls a Kotlin method to resume the continuation, restarting this loop
-* Once the future is ready, then the Kotlin function returns, completing the async call
-* If the future returns an error, or if there's an unexpected error,
-  then the Rust code causes the poll function to throw
+* Returning values:
+    * Primitive types:
+        * Kotlin passes a `Completion` object to the poll function.
+        * Before returning `UNIFFI_RUST_FUTURE_COMPLETE`, Rust passes the return value to `completion.complete()`.
+        * Kotlin returns the passed value from the async function.
+    * Deconstructable types work like primitive values, except Rust passes multiple primitive values to `complete()`
+      and Kotlin reconstructs the return value from those.
+    * Otherwise, Rust inputs a FFI buffer handle in the initial FFI call
+      and writes the return value to it
+* Error handling: Rust constructs and throws an exception from the poll function, as described in `Errors/exceptions`
 
 ### Rust -> Rust async call
 
 * Rust creates a oneshot sender/receiver.
-* Rust calls the Kotlin function,
-  passing it a handle for the oneshot sender plus all the usual arguments
+* FFI arguments:
+    * Handle for the oneshot sender
+    * FFI buffer handle (if needed)
+    * Primitive values for all primitive/deconstructable arguments
+* The Kotlin FFI function schedules the async call, then returns
 * Rust awaits the oneshot receiver
-* When the Kotlin async function completes, it calls a Rust completion function
-  It passes that function the oneshot sender handle alongside any other data for the return
-* Rust sends the return value to the receiver, completing the async call
-* Rust defines separate completion functions to handle errors and unexpected errors
+* When the Kotlin async function completes:
+    * Kotlin calls a Rust completion function
+    * Kotlin passes the oneshot sender handle, plus return value data
+    * Rust constructs the return value and sends it to the oneshot sender
+* Returning values from the async function:
+    * Primitive types: Kotlin passes the primitive value to the completion function
+    * Deconstructable types: Kotlin passes the deconstructed primitive values to the completion function.
+    * Otherwise:
+        * Rust inputs a FFI buffer handle in the initial FFI call.
+        * Kotlin writes the return value to the buffer
+* Error handling:
+    * Rust defines separate completion functions to handle errors/unexpected errors.
+    * Those functions work similarly to the success completion function,
+      they input the sender channel, construct the result value, then send it via the channel.
 
 # Kotlin `uniffi` package
 

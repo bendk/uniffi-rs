@@ -28,7 +28,12 @@ object Scaffolding {
         {%- endfor %}
     )
         {%- if scaffolding_function.callable.is_async %}: Long
-        {%- elif let ReturnStrategy::Primitive(_, ffi_type) = scaffolding_function.callable.return_strategy() %}: {{ ffi_type.type_kt() }}
+        {%- else %}
+        {%- match scaffolding_function.callable.return_strategy() %}
+        {%- when ReturnStrategy::Primitive(_, ffi_type) %}: {{ ffi_type.type_kt() }}
+        {%- when ReturnStrategy::Reconstruct(type_node, _) %}: {{ type_node.type_kt }}
+        {%- else %}
+        {%- endmatch %}
         {%- endif %}
     {%- endfor %}
 
@@ -50,7 +55,7 @@ object Scaffolding {
         {%- match rust_result.return_strategy() %}
         {%- when ReturnStrategy::FfiBuffer(_) %}
         uniffiBuffer: Long,
-        {%- when ReturnStrategy::Primitive(_, _) %}
+        {%- when ReturnStrategy::Primitive(_, _) | ReturnStrategy::Reconstruct(_, _) %}
         completion: {{ rust_result.async_complete_class() }},
         {%- when ReturnStrategy::Void %}
         {%- endmatch %}
@@ -67,6 +72,10 @@ object Scaffolding {
             buffer: Long,
             {%- when ReturnStrategy::Primitive(_, ffi_type) %}
             uniffiReturn: {{ ffi_type.type_kt() }},
+            {%- when ReturnStrategy::Reconstruct(_, ffi_types) %}
+            {%- for ffi_type in ffi_types %}
+            uniffiReturnV{{ loop.index0 }}: {{ ffi_type.type_kt() }},
+            {%- endfor %}
             {%- when ReturnStrategy::Void %}
             {%- endmatch %}
     )
@@ -86,6 +95,42 @@ object Scaffolding {
     )
     {%- endif %}
     @JvmStatic external fun {{ callback_result.async_complete_unexpected_error_fn() }}(kotlinFuture: Long)
+    {%- endfor %}
+
+    {%- for callback_result in root.kotlin_sync_callable_results() %}
+
+    {%- if let Some(return_type) = callback_result.return_type %}
+    {%- if let Some(LowerableType::Deconstructable(ffi_types)) = return_type.lowerable %}
+    @JvmStatic external fun {{ callback_result.set_callback_return_fn_kt() }}(
+        resultPointer: Long,
+        {%- for ffi_type in ffi_types %}
+        v{{ loop.index0 }}: {{ ffi_type.type_kt() }},
+        {%- endfor %}
+    )
+    {%- endif %}
+    {%- endif %}
+
+    {%- if let Some(throws_type) = callback_result.throws_type %}
+    {%- match throws_type.lowerable %}
+    {%- when Some(LowerableType::Primitive(ffi_type)) %}
+    @JvmStatic external fun {{ callback_result.set_callback_err_fn_kt() }}(
+        resultPointer: Long,
+        errorValue: {{ ffi_type.type_kt() }},
+    )
+    {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
+    @JvmStatic external fun {{ callback_result.set_callback_err_fn_kt() }}(
+        resultPointer: Long,
+        {%- for ffi_type in ffi_types %}
+        v{{ loop.index0 }}: {{ ffi_type.type_kt() }},
+        {%- endfor %}
+    )
+    {%- when None %}
+    @JvmStatic external fun {{ callback_result.set_callback_err_fn_kt() }}(
+        resultPointer: Long,
+        uniffiBuffer: Long,
+    )
+    {%- endmatch %}
+    {%- endif %}
 
     {%- endfor %}
 

@@ -407,10 +407,6 @@ impl TypeNode {
         }
     }
 
-    pub fn jni_signature(&self) -> String {
-        format!("L{};", self.type_kt.replace(".", "/").replace("`", ""))
-    }
-
     pub fn throw_error_fn_rs(&self) -> String {
         format!("uniffi_throw_error_{}", self.id)
     }
@@ -419,7 +415,29 @@ impl TypeNode {
         format!("construct{}", self.id)
     }
 
+    pub fn lift_fn_jni_signature(&self) -> String {
+        let args = match &self.lowerable {
+            None => "J".to_string(),
+            Some(LowerableType::Deconstructable(ffi_types)) => ffi_types
+                .iter()
+                .map(|ffi_type| ffi_type.jni_signature())
+                .collect(),
+            Some(LowerableType::Primitive(ffi_type)) => ffi_type.jni_signature().to_string(),
+        };
+        let ret = format!("L{};", self.type_kt.replace(".", "/").replace("`", ""));
+        format!("({args}){ret}")
+    }
+
+    pub fn is_primitive(&self) -> bool {
+        matches!(self.lowerable, Some(LowerableType::Primitive(_)))
+    }
+
     pub fn uses_buffer(&self) -> bool {
         self.lowerable.is_none()
+    }
+
+    /// Static Rust variable to call the Kotlin lift function from Rust
+    pub fn lift_kt_from_rust_var(&self) -> String {
+        format!("UNIFFI_CACHED_LIFT_KT_{}", self.id)
     }
 }

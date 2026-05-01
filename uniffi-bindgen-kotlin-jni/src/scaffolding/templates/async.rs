@@ -58,15 +58,11 @@ impl uniffi::RustFutureCallback for UniffiRustFutureContinutation {
         // * The args match the function signature
         unsafe {
             uniffi_jni::attach_current_thread(uniffi_get_global_jvm(), |env| {
-                if UNIFFI_CONTINUATION_RESUME.call_void(env, [
+                UNIFFI_CONTINUATION_RESUME.call_void(env, [
                     uniffi_jni::jvalue {
                         l: self.continuation,
                     },
-                ]).is_err() {
-                    ((**env).v1_2.ExceptionClear)(env);
-                    eprintln!("Exception calling uniffi.uniffiContinuationResume");
-
-                }
+                ]).warn_on_exception(env, "uniffiContinuationResume");
                 ((**env).v1_2.DeleteGlobalRef)(env, self.continuation);
             });
         }
@@ -74,25 +70,32 @@ impl uniffi::RustFutureCallback for UniffiRustFutureContinutation {
 }
 
 {%- for rust_result in root.rust_async_callable_results() %}
-
 #[unsafe(no_mangle)]
 pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ rust_result.async_poll_fn() }}(
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
     uniffi_future_handle: i64,
     continuation: uniffi_jni::jobject,
-    {%- if rust_result.return_strategy().is_primitive() %}
+    {%- if rust_result.return_strategy().is_lowerable() %}
     completion: uniffi_jni::jobject
     {%- endif %}
 ) -> i32 {
     uniffi::trace!("RustFuture::poll: {uniffi_future_handle:x}");
-    {%- if let ReturnStrategy::Primitive(_, ffi_type) = rust_result.return_strategy() %}
+    {%- match rust_result.return_strategy() %}
+    {%- when ReturnStrategy::Primitive(_, ffi_type) %}
     static UNIFFI_COMPLETE_METHOD: uniffi_jni::CachedMethod = uniffi_jni::CachedMethod::new(
         c"uniffi/{{ rust_result.async_complete_class() }}",
         c"complete",
         c"({{ ffi_type.jni_signature() }})V",
     );
-    {%- endif %}
+    {%- when ReturnStrategy::Reconstruct(_, ffi_types) %}
+    static UNIFFI_COMPLETE_METHOD: uniffi_jni::CachedMethod = uniffi_jni::CachedMethod::new(
+        c"uniffi/{{ rust_result.async_complete_class() }}",
+        c"complete",
+        c"({% for ffi_type in ffi_types %}{{ ffi_type.jni_signature() }}{% endfor %})V",
+    );
+    {%- else %}
+    {%- endmatch %}
     unsafe {
         uniffi_jni::rust_call(uniffi_env, |uniffi_env| {
             // Safety:
@@ -119,33 +122,61 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ rust_result.async_poll_
                 ::std::task::Poll::Ready(uniffi::Result::Ok(uniffi::Result::Ok(uniffi_return))) => {
                 {%- endif %}
                     uniffi::trace!("RustFuture::poll: ready");
-                    {%- if let ReturnStrategy::Primitive(type_node, ffi_type) = rust_result.return_strategy() %}
-                    match {{ type_node.lower_fn_rs() }}(uniffi_env, uniffi_return) {
+
+                    let uniffi_return_value = || {
+                        {%- match rust_result.return_strategy() %}
+                        {%- when ReturnStrategy::FfiBuffer(return_type) %}
+                        let (uniffi_return, mut uniffi_buf) = uniffi_return;
+                        uniffi_buf.with_cursor(|uniffi_writer| {
+                            {{ return_type.write_fn_rs() }}(uniffi_writer, uniffi_return)
+                        })
+                        {%- when ReturnStrategy::Primitive(type_node, ffi_type) %}
+                        let uniffi_return_lower = {{ type_node.lower_fn_rs() }}(uniffi_env, uniffi_return)?;
+                        UNIFFI_COMPLETE_METHOD.call_void(
+                            uniffi_env, 
+                            completion,
+                            [
+                                uniffi_jni::jvalue {
+                                    {{ ffi_type.jvalue_field() }}: uniffi_return_lower,
+                                },
+                            ],
+                        ).to_anyhow_result(uniffi_env, "{{ rust_result.async_complete_class() }}.complete")
+                        {%- when ReturnStrategy::Reconstruct(type_node, ffi_types) %}
+                        let uniffi_return_deconstructed = {{ type_node.lower_fn_rs() }}(uniffi_env, uniffi_return)?;
+                        UNIFFI_COMPLETE_METHOD.call_void(
+                            uniffi_env, 
+                            completion,
+                            [
+                                {%- for ffi_type in ffi_types %}
+                                uniffi_jni::jvalue {
+                                    {{ ffi_type.jvalue_field() }}: uniffi_return_deconstructed.{{ loop.index0 }},
+                                },
+                                {%- endfor %}
+                            ],
+                        ).to_anyhow_result(uniffi_env, "{{ rust_result.async_complete_class() }}.complete")
+                        {%- when ReturnStrategy::Void %}
+                        UniffiAnyhowResult::Ok(())
+                        {%- endmatch %}
+                    };
+                    match uniffi_return_value() {
+                        Ok(v) => Ok(UNIFFI_RUST_FUTURE_COMPLETE),
                         Err(e) => {
-                            eprintln!("{{ type_node.lower_fn_rs() }} failed to return async value ({e})");
+                            eprintln!("{e}");
                             return Ok(UNIFFI_RUST_FUTURE_FAILED)
                         }
-                        Ok(v) => {
-                            if let Err(e) = UNIFFI_COMPLETE_METHOD.call_void(
-                                uniffi_env, 
-                                completion,
-                                [
-                                    uniffi_jni::jvalue {
-                                        {{ ffi_type.jvalue_field() }}: v,
-                                    },
-                                ],
-                            ) {
-                                eprintln!("Failed to call {{ rust_result.async_complete_class() }}.complete()");
-                                return Ok(UNIFFI_RUST_FUTURE_FAILED)
-                            }
-                        }
                     }
-                    {%- endif %}
-                    Ok(UNIFFI_RUST_FUTURE_COMPLETE)
                 }
                 {%- if let Some(throws_type) = rust_result.throws_type %}
-                ::std::task::Poll::Ready(uniffi::Result::Ok(uniffi::Result::Err((uniffi_err, uniffi_buf_from_caller)))) => {
+                ::std::task::Poll::Ready(uniffi::Result::Ok(uniffi::Result::Err(error_data))) => {
                     uniffi::trace!("RustFuture::poll: ready (error)");
+                    {%- if !throws_type.uses_buffer() %}
+                    // Safety:
+                    // * `uniffi_env` points to a valid JNIEnv
+                    unsafe {
+                        {{ throws_type.throw_error_fn_rs() }}(uniffi_env, error_data);
+                    };
+                    {%- else %}
+                    let (uniffi_err, uniffi_buf_from_caller) = error_data;
                     let (mut uniffi_buf, need_to_free_buffer) = match uniffi_buf_from_caller {
                         Some(buf) => (buf, false),
                         None => (uniffi::FfiBuffer::new(), true),
@@ -153,10 +184,17 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ rust_result.async_poll_
                     // Safety:
                     // * `uniffi_env` points to a valid JNIEnv
                     // * `uniffi_buf` points to a valid FFI buffer
-                    unsafe { {{ throws_type.throw_error_fn_rs() }}(uniffi_env, &mut uniffi_buf, uniffi_err); };
+                    unsafe { {{ throws_type.throw_error_fn_rs() }}(
+                        uniffi_env,
+                        {%- if throws_type.uses_buffer() %}
+                        &mut uniffi_buf,
+                        {%- endif %}
+                        uniffi_err,
+                    ); };
                     if need_to_free_buffer {
                         uniffi_buf.free()
                     }
+                    {%- endif %}
                     // The return value doesn't matter, since the Kotlin code will throw once it's
                     // resumes.  Let's use UNIFFI_RUST_FUTURE_FAILED so that if that fails somehow
                     // we the async function will still fail.
@@ -188,8 +226,9 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ rust_result.async_cance
     uniffi::trace!("RustFuture::cancel: {uniffi_future_handle:x}");
     // Safety:
     // We assume the Kotlin side of the FFI sent us a future handle
-    let ptr = unsafe {
-        ::std::ptr::with_exposed_provenance::<UniffiRustFuture<{{ rust_result.async_rust_future_output() }}>>(uniffi_future_handle as usize)
+    unsafe {
+        let ptr = ::std::ptr::with_exposed_provenance::<UniffiRustFuture<{{ rust_result.async_rust_future_output() }}>>(uniffi_future_handle as usize);
+        (*ptr).scheduler.lock().unwrap().cancel();
     };
 }
 
@@ -212,6 +251,7 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ rust_result.async_free_
 
 {%- for callback_result in root.kotlin_async_callable_results() %}
 {%- let return_strategy = callback_result.return_strategy() %}
+{%- let is_async = true %}
 {%- let return_type = callback_result.return_type %}
 {%- let throws_type = callback_result.throws_type %}
 
@@ -225,6 +265,10 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ callback_result.async_c
     uniffi_buf_handle: i64,
     {%- when ReturnStrategy::Primitive(_, ffi_type) %}
     uniffi_return: {{ ffi_type.type_rs() }},
+    {%- when ReturnStrategy::Reconstruct(_, ffi_types) %}
+    {%- for ffi_type in ffi_types %}
+    uniffi_return{{ loop.index0 }}: {{ ffi_type.type_rs() }},
+    {%- endfor %}
     {%- when ReturnStrategy::Void %}
     {%- endmatch %}
 ) {
@@ -243,6 +287,11 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ callback_result.async_c
         );
         let mut return_result = || {
             {%- filter indent(12) %}{% include "lift_return.rs" %}{% endfilter %}
+            {%- if throws_type.is_some() %}
+            return ::std::result::Result::Ok(::std::result::Result::Ok(uniffi_return));
+            {%- else %}
+            return ::std::result::Result::Ok(uniffi_return);
+            {%- endif %}
         };
         sender.send(return_result());
     }

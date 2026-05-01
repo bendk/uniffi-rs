@@ -96,9 +96,14 @@ fn map_methods(
 fn jni_signature(callable: &Callable) -> Result<String> {
     let mut args = String::from("J");
     if callable.uses_buffer() {
+        // Buffer handle
         args.push('J');
     }
     if callable.is_async {
+        // Future handle
+        args.push('J');
+    } else if callable.return_strategy().is_reconstruct() || callable.throws_type().is_some() {
+        // Return value pointer
         args.push('J');
     }
     // Arg for each primitive arg
@@ -130,6 +135,7 @@ fn jni_method_call_name(callable: &Callable) -> Result<String> {
             FfiType::Boolean => "call_boolean",
             FfiType::String => "call_object",
         },
+        Some(LowerableType::Deconstructable(_)) => "call_object",
         _ => "call_void",
     }
     .into())

@@ -20,13 +20,12 @@ val uniffiFuture = uniffi.Scaffolding.{{ jni_method_name }}(
     {{ arg.name_kt() }},
     {%- endfor %}
 )
-val uniffiReturn = uniffi.{{ callable.result.async_await_future_fn() }}(
+return uniffi.{{ callable.result.async_await_future_fn() }}(
     uniffiFuture,
     {%- if callable.return_strategy().is_ffi_buffer() %}
     uniffiBuffer,
     {%- endif %}
 );
-{% include "LiftReturn.kt" %}
 {%- endif %}
 {%- if callable.uses_buffer() %}
 } finally {

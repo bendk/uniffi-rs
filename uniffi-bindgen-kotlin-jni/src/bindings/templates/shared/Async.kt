@@ -13,14 +13,14 @@ suspend fun {{ rust_result.async_await_future_fn() }}(
     {%- if rust_result.return_strategy().is_ffi_buffer() %}
     uniffiBuffer: Long,
     {%- endif %}
-)
-{%- if let ReturnStrategy::Primitive(_, ffi_type) = rust_result.return_strategy() %}: {{ ffi_type.type_kt() }}
-{%- endif %}
+){%- if let Some(return_type) = rust_result.return_type %} : {{ return_type.type_kt }}{% endif %}
 {
     try {
-        {%- if rust_result.return_strategy().is_primitive() %}
+        {%- match rust_result.return_strategy() %}
+        {%- when ReturnStrategy::Primitive(_, _) | ReturnStrategy::Reconstruct(_, _) %}
         val completion = {{ rust_result.async_complete_class() }}();
-        {%- endif %}
+        {%- else %}
+        {%- endmatch %}
         while(true) {
             val continuationResult = kotlin.coroutines.suspendCoroutine<Int> { continuation ->
                 val pollResult = Scaffolding.{{ rust_result.async_poll_fn() }}(
@@ -29,7 +29,7 @@ suspend fun {{ rust_result.async_await_future_fn() }}(
                     {%- match rust_result.return_strategy() %}
                     {%- when ReturnStrategy::FfiBuffer(_) %}
                     uniffiBuffer,
-                    {%- when ReturnStrategy::Primitive(_, _) %}
+                    {%- when ReturnStrategy::Primitive(_, _) | ReturnStrategy::Reconstruct(_, _) %}
                     completion,
                     {%- when ReturnStrategy::Void %}
                     {%- endmatch %}
@@ -41,11 +41,17 @@ suspend fun {{ rust_result.async_await_future_fn() }}(
             when (continuationResult) {
                 UNIFFI_RUST_FUTURE_POLL_AGAIN -> continue
                 UNIFFI_RUST_FUTURE_COMPLETE -> {
-                    {%- if rust_result.return_strategy().is_primitive() %}
-                    return completion.value
-                    {%- else %}
+                    {%- match rust_result.return_strategy() %}
+                    {%- when ReturnStrategy::FfiBuffer(type_node) %}
+                    val uniffiReader = uniffi.FfiBufferCursor(uniffiBuffer)
+                    return uniffi.{{ type_node.read_fn_kt() }}(uniffiReader)
+                    {%- when ReturnStrategy::Primitive(type_node, ffi_type) %}
+                    return {{ type_node.lift_fn_kt() }}(completion.value)
+                    {%- when ReturnStrategy::Reconstruct(_, _) %}
+                    return completion.value!!
+                    {%- when ReturnStrategy::Void %}
                     return
-                    {%- endif %}
+                    {%- endmatch %}
                 }
                 UNIFFI_RUST_FUTURE_CANCELLED -> throw kotlin.coroutines.cancellation.CancellationException()
                 else -> throw uniffi.InternalException("Error polling Rust future (code: $continuationResult)")
@@ -57,7 +63,8 @@ suspend fun {{ rust_result.async_await_future_fn() }}(
 }
 
 
-{%- if let ReturnStrategy::Primitive(_, ffi_type) = rust_result.return_strategy() %}
+{%- match rust_result.return_strategy() %}
+{%- when ReturnStrategy::Primitive(_, ffi_type) %}
 class {{ rust_result.async_complete_class() }} {
     var value: {{ ffi_type.type_kt() }} = {{ ffi_type.default_kt() }}
 
@@ -65,5 +72,22 @@ class {{ rust_result.async_complete_class() }} {
         this.value = value
     }
 }
-{%- endif %}
+{%- when ReturnStrategy::Reconstruct(type_node, ffi_types) %}
+class {{ rust_result.async_complete_class() }} {
+    var value: {{ type_node.type_kt }}? = null;
+
+    fun complete(
+        {%- for ffi_type in ffi_types %}
+        v{{loop.index0 }}: {{ ffi_type.type_kt() }},
+        {%- endfor %}
+    ) {
+        this.value = {{ type_node.lift_fn_kt() }}(
+            {%- for _ in ffi_types %}
+            v{{loop.index0 }},
+            {%- endfor %}
+        )
+    }
+}
+{%- else %}
+{%- endmatch %}
 {%- endfor %}

@@ -59,6 +59,7 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
 
 {%- for meth in cbi.methods %}
 {%- let callable = meth.callable %}
+{%- let is_async = callable.is_async %}
 {%- let return_strategy = callable.return_strategy() %}
 {%- let return_type = callable.return_type() %}
 {%- let throws_type = callable.throws_type() %}
@@ -86,9 +87,12 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
     // * uniffi_get_global_jvm() returns a valid JavaVM pointer
     // * We use the JNI API correctly
     unsafe {
+        {%- if meth.passes_return_value_pointer() %}
+        let mut uniffi_result_set_by_kotlin_call: ::std::option::Option<{{ callable.result.return_type_rs() }}> = None;
+        {%- endif %}
         uniffi_jni::attach_current_thread(uniffi_get_global_jvm(), |uniffi_env| {
             {% filter indent(12) %}{% include "lower_args.rs" %}{% endfilter %}
-            let uniffi_result = METHOD.{{ meth.jni_method_call_name }}(uniffi_env, [
+            let uniffi_return = METHOD.{{ meth.jni_method_call_name }}(uniffi_env, [
                 uniffi_jni::jvalue {
                     j: uniffi_callback_handle,
                 },
@@ -97,34 +101,35 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                     j: uniffi_buf.as_ptr().expose_provenance() as i64,
                 },
                 {%- endif %}
+                {%- if meth.passes_return_value_pointer() %}
+                uniffi_jni::jvalue {
+                    j: ::std::ptr::from_mut(&mut uniffi_result_set_by_kotlin_call) as i64,
+                },
+                {%- endif %}
                 {%- for ffi_arg in callable.ffi_arguments() %}
                 uniffi_jni::jvalue {
                     {{ ffi_arg.ty.jvalue_field() }}: {{ ffi_arg.name_rs() }},
                 },
                 {%- endfor %}
-            ]);
+            ]).to_anyhow_result(uniffi_env, "{{ meth.dispatch_fn_kt }}")?;
 
-            match uniffi_result {
-                Ok(uniffi_return) => {
-                    // Callback returned normally, read the return value
-                    {% filter indent(20) %}{% include "lift_return.rs" %}{% endfilter %}
-                }
-                Err(uniffi_exc) => {
-                    ((**uniffi_env).v1_2.ExceptionClear)(uniffi_env);
-                    {%- if let Some(throws_type) = callable.throws_type() %}
-                    if uniffi_jni::is_callback_exception(uniffi_env, uniffi_exc) {
-                        // Handle the case the callback throwing a `uniffi.CallbackException` error
-                        //
-                        // In this case we need to read the E side of the Result from the FFI buffer
-                        let uniffi_err = uniffi_buf.with_cursor(|uniffi_reader| {
-                            {{ throws_type.read_fn_rs() }}(uniffi_reader)
-                        })?;
-                        return Ok(Err(uniffi_err));
-                    }
-                    {%- endif %}
-                    Err(uniffi::deps::anyhow::anyhow!("{}", uniffi_jni::throwable_get_message(uniffi_env, uniffi_exc)))
-                }
+            {%- if meth.passes_return_value_pointer() %}
+            // If `uniffi_result_set_by_kotlin_call` was set by a Kotlin call, then return
+            // it now
+            if let Some(result) = uniffi_result_set_by_kotlin_call {
+                return ::std::result::Result::Ok(result);
             }
+            {%- endif %}
+
+            // Callback returned normally, read the return value
+            {% filter indent(20) %}{% include "lift_return.rs" %}{% endfilter %}
+            {%- if callable.return_strategy().is_reconstruct() %}
+            uniffi::deps::anyhow::bail!("Kotlin callback returned without calling the set result function ({{ callable.name }})");
+            {%- elif throws_type.is_some() %}
+            return ::std::result::Result::Ok(::std::result::Result::Ok(uniffi_return));
+            {%- else %}
+            return ::std::result::Result::Ok(uniffi_return);
+            {%- endif %}
         })
     }
 
@@ -158,14 +163,13 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                     {{ ffi_arg.ty.jvalue_field() }}: {{ ffi_arg.name_rs() }},
                 },
                 {%- endfor %}
-            ]).map_err(|_| {
-                ((**uniffi_env).v1_2.ExceptionClear)(uniffi_env);
-                uniffi::deps::anyhow::anyhow!("Exception calling {{ meth.dispatch_fn_kt }}")
-            }).map(|_| {
-                // Return `uniffi_buf` back so that we can continue to use it in the code below.
-                // This allows us to continue to use the `&mut` after "moving" it into AssertUnwindSafe
-                uniffi_buf
-            })
+            ])
+               .to_anyhow_result(uniffi_env, "{{ meth.dispatch_fn_kt }}")
+               .map(|_| {
+                    // Return `uniffi_buf` back so that we can continue to use it in the code below.
+                    // This allows us to continue to use the `&mut` after "moving" it into AssertUnwindSafe
+                    uniffi_buf
+                })
         })?
     };
     uniffi_receiver.await
@@ -187,14 +191,11 @@ impl Drop for {{ cbi.impl_struct_rs() }} {
         // * The arguments match the method signature
         unsafe {
             uniffi_jni::attach_current_thread(uniffi_get_global_jvm(), |env| {
-                if METHOD.call_void(env, [
+                METHOD.call_void(env, [
                     uniffi_jni::jvalue {
                         j: self.handle,
                     }
-                ]).is_err() {
-                    ((**env).v1_2.ExceptionClear)(env);
-                    eprintln!("Exception calling {{ cbi.free_fn_kt() }}");
-                }
+                ]).warn_on_exception(env, "{{ cbi.free_fn_kt() }}");
             });
         }
     }

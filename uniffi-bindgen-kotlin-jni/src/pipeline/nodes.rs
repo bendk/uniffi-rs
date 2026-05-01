@@ -284,6 +284,7 @@ pub enum CallableKind {
 pub enum ReturnStrategy<'a> {
     FfiBuffer(&'a TypeNode),
     Primitive(&'a TypeNode, FfiType),
+    Reconstruct(&'a TypeNode, &'a [FfiType]),
     Void,
 }
 
@@ -537,24 +538,60 @@ impl Root {
         throws_types.into_iter()
     }
 
-    pub fn rust_async_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
-        let mut unique_types = IndexMap::new();
+    /// Unique return/throws types for Rust functions
+    pub fn rust_return_and_throws_types(&self) -> impl Iterator<Item = &TypeNode> {
+        let mut seen = HashSet::new();
+        let mut type_nodes = vec![];
         self.visit(|callable: &Callable| {
-            if callable.is_async && callable.is_for_rust_function() {
-                unique_types.insert(callable.result.id, &callable.result);
+            if let Some(return_type) = callable.return_type() {
+                if seen.insert(&return_type.id) {
+                    type_nodes.push(return_type);
+                }
+            }
+            if let Some(throws_type) = callable.throws_type() {
+                if seen.insert(&throws_type.id) {
+                    type_nodes.push(throws_type);
+                }
             }
         });
-        unique_types.into_values()
+        type_nodes.into_iter()
+    }
+
+    pub fn rust_sync_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
+        self.unique_callable_results(|callable| {
+            !callable.is_async && callable.is_for_rust_function()
+        })
+    }
+
+    pub fn rust_async_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
+        self.unique_callable_results(|callable| {
+            callable.is_async && callable.is_for_rust_function()
+        })
+    }
+
+    pub fn kotlin_sync_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
+        self.unique_callable_results(|callable| {
+            !callable.is_async && callable.is_for_kotlin_function()
+        })
     }
 
     pub fn kotlin_async_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
-        let mut unique_types = IndexMap::new();
+        self.unique_callable_results(|callable| {
+            callable.is_async && callable.is_for_kotlin_function()
+        })
+    }
+
+    fn unique_callable_results(
+        &self,
+        filter_callable: impl Fn(&Callable) -> bool,
+    ) -> impl Iterator<Item = &CallableResult> {
+        let mut results = IndexMap::new();
         self.visit(|callable: &Callable| {
-            if callable.is_async && callable.is_for_kotlin_function() {
-                unique_types.insert(callable.result.id, &callable.result);
+            if filter_callable(callable) {
+                results.insert(callable.result.id, &callable.result);
             }
         });
-        unique_types.into_values()
+        results.into_values()
     }
 
     pub fn disable_java_cleaner(&self) -> bool {
@@ -682,17 +719,9 @@ impl Callable {
     }
 
     pub fn uses_buffer(&self) -> bool {
-        if self.kind.is_callback_method() && !self.is_async && self.throws_type().is_some() {
-            // Sync callback methods currently always need to use buffer if they throw.
-            // TODO: remove this kludge.
-            return true;
-        }
-
         self.arguments.iter().any(Argument::uses_buffer)
             || self.has_receiver()
-            || self
-                .return_type()
-                .is_some_and(|ty| !matches!(ty.lowerable, Some(LowerableType::Primitive(_))))
+            || self.return_type().is_some_and(TypeNode::uses_buffer)
     }
 
     pub fn return_strategy(&self) -> ReturnStrategy<'_> {
@@ -737,14 +766,19 @@ impl CallableResult {
                 Some(LowerableType::Primitive(ffi_type)) => {
                     ReturnStrategy::Primitive(type_node, *ffi_type)
                 }
-                Some(LowerableType::Deconstructable(_ffi_types)) => {
-                    // We don't support deconstructing return values yet
-                    ReturnStrategy::FfiBuffer(type_node)
+                Some(LowerableType::Deconstructable(ffi_types)) => {
+                    ReturnStrategy::Reconstruct(type_node, ffi_types)
                 }
                 None => ReturnStrategy::FfiBuffer(type_node),
             },
             _ => ReturnStrategy::Void,
         }
+    }
+
+    pub fn return_is_lowerable(&self) -> bool {
+        self.return_type
+            .as_ref()
+            .is_some_and(|type_node| type_node.lowerable.is_some())
     }
 
     pub fn async_await_future_fn(&self) -> String {
@@ -803,20 +837,39 @@ impl CallableResult {
     }
 
     pub fn async_rust_future_output(&self) -> String {
-        let ok_type = match self.return_strategy() {
-            ReturnStrategy::Primitive(type_node, _) => &type_node.type_rs,
-            _ => "()",
+        let ok_type = match &self.return_type {
+            Some(ty) if ty.uses_buffer() => {
+                // Pass both the value and the FfiBuffer to write it to
+                format!("({}, uniffi::FfiBuffer)", &ty.type_rs)
+            }
+            Some(ty) => ty.type_rs.clone(),
+            None => "()".to_string(),
         };
         let expected_result_type = if let Some(throws_type) = &self.throws_type {
             let throws_type_rs = &throws_type.type_rs;
-            // For errors, we return the E type, plus the FFI buffer if the caller sent us one.
-            format!("::std::result::Result<{ok_type}, ({throws_type_rs}, ::std::option::Option<uniffi::FfiBuffer>)>")
+            if throws_type.uses_buffer() {
+                // For errors that need a FFI buffer, we return the E type, plus the FFI buffer if the caller sent us one.
+                format!("::std::result::Result<{ok_type}, ({throws_type_rs}, ::std::option::Option<uniffi::FfiBuffer>)>")
+            } else {
+                // For other errors that need a FFI buffer, we just return the E type
+                format!("::std::result::Result<{ok_type}, {throws_type_rs}>")
+            }
         } else {
             ok_type.to_string()
         };
 
         // Everything gets wrapped in an anyhow::Result to handle unexpected errors
         format!("uniffi::Result<{expected_result_type}>")
+    }
+
+    /// Rust JNI function that the Kotlin code calls to set the result of a callback interface
+    pub fn set_callback_return_fn_kt(&self) -> String {
+        format!("setCallbackReturn{}", self.id)
+    }
+
+    /// Rust JNI function that the Kotlin code can call to set the result of a callback interface to an error
+    pub fn set_callback_err_fn_kt(&self) -> String {
+        format!("setCallbackErr{}", self.id)
     }
 }
 
@@ -827,6 +880,14 @@ impl<'a> ReturnStrategy<'a> {
 
     pub fn is_ffi_buffer(&self) -> bool {
         matches!(&self, ReturnStrategy::FfiBuffer(_))
+    }
+
+    pub fn is_reconstruct(&self) -> bool {
+        matches!(&self, ReturnStrategy::Reconstruct(_, _))
+    }
+
+    pub fn is_lowerable(&self) -> bool {
+        self.is_primitive() || self.is_reconstruct()
     }
 }
 
@@ -935,6 +996,21 @@ impl CallbackInterface {
             self.crate_name.to_upper_camel_case(),
             self.orig_name.to_upper_camel_case(),
         )
+    }
+}
+
+impl CallbackMethod {
+    /// Does the Rust code pass a return_value_pointer pointer to the Kotlin code?
+    ///
+    /// We do this if either of these is true:
+    /// * The return value is deconstructable.  In this case, the Kotlin code returns the result by
+    ///   calling the `set_callback_return_fn_kt` function and passing it the primitive values.
+    /// * There is a throws type.  In this case the Kotlin code returns an error by
+    ///   calling the `set_callback_err_fn_kt` function and passing it the data needed to construct the
+    ///   Err value.
+    ///
+    pub fn passes_return_value_pointer(&self) -> bool {
+        self.callable.return_strategy().is_reconstruct() || self.callable.throws_type().is_some()
     }
 }
 

@@ -12,6 +12,9 @@ fun {{ meth.dispatch_fn_kt }}(
     {%- if callable.uses_buffer() %}
     uniffiBuffer: Long,
     {%- endif %}
+    {%- if callable.return_strategy().is_reconstruct() || callable.throws_type().is_some() %}
+    uniffiReturnPointer: Long,
+    {%- endif %}
     {%- for ffi_arg in callable.ffi_arguments() %}
     {{ ffi_arg.name_kt() }}: {{ ffi_arg.ty.type_kt() }},
     {%- endfor %}
@@ -36,9 +39,36 @@ fun {{ meth.dispatch_fn_kt }}(
             {%- endfor %}
         )
     } catch(uniffiErr: {{ throws_ty.type_kt }}) {
-        val uniffiWriter = FfiBufferCursor(uniffiBuffer)
-        {{ throws_ty.write_fn_kt() }}(uniffiWriter, uniffiErr)
-        throw uniffi.CallbackException()
+        {%- match throws_ty.lowerable %}
+        {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
+        val uniffiErrDeconstructed = {{ throws_ty.lower_fn_kt() }}(uniffiErr)
+        Scaffolding.{{ callable.result.set_callback_err_fn_kt() }}(
+            uniffiReturnPointer,
+            {%- for _ in ffi_types %}
+            uniffiErrDeconstructed.v{{ loop.index0 }},
+            {%- endfor %}
+        )
+        {%- when Some(LowerableType::Primitive(ffi_type)) %}
+        Scaffolding.{{ callable.result.set_callback_err_fn_kt() }}(uniffiReturnPointer, {{ throws_ty.lower_fn_kt() }}(uniffiErr))
+        {%- when None %}
+        {%- if !callable.uses_buffer() %}
+        val uniffiBuffer = Scaffolding.ffiBufferNew()
+        try {
+        {%- endif %}
+            val uniffiWriter = FfiBufferCursor(uniffiBuffer)
+            {{ throws_ty.write_fn_kt() }}(uniffiWriter, uniffiErr)
+            Scaffolding.{{ callable.result.set_callback_err_fn_kt() }}(uniffiReturnPointer, uniffiBuffer)
+        {%- if !callable.uses_buffer() %}
+        } finally {
+            Scaffolding.ffiBufferFree(uniffiBuffer)
+        }
+        {%- endif %}
+        {%- endmatch %}
+        {%- if let ReturnStrategy::Primitive(_, ffi_type) = callable.return_strategy() %}
+        return {{ ffi_type.default_kt() }}
+        {%- else %}
+        return
+        {%- endif %}
     }
     {%- endmatch %}
     {%- match callable.return_strategy() %}
@@ -47,6 +77,14 @@ fun {{ meth.dispatch_fn_kt }}(
     {{ return_type.write_fn_kt() }}(uniffiWriter, uniffiReturn)
     {%- when ReturnStrategy::Primitive(type_node, _) %}
     return {{ type_node.lower_fn_kt() }}(uniffiReturn)
+    {%- when ReturnStrategy::Reconstruct(type_node, ffi_types) %}
+    val uniffiErrDeconstructed = {{ type_node.lower_fn_kt() }}(uniffiReturn)
+    Scaffolding.{{ callable.result.set_callback_return_fn_kt() }}(
+        uniffiReturnPointer,
+        {%- for _ in ffi_types %}
+        uniffiErrDeconstructed.v{{ loop.index0 }},
+        {%- endfor %}
+    )
     {%- when ReturnStrategy::Void %}
     {% endmatch %}
 }
@@ -85,6 +123,14 @@ fun {{ meth.dispatch_fn_kt }}(
             {%- when ReturnStrategy::Primitive(type_node, _) %}
             val uniffiReturnLowered = {{ type_node.lower_fn_kt() }}(uniffiReturn)
             Scaffolding.{{ callable.result.async_complete_success_fn() }}(uniffiKotlinFutureHandle, uniffiReturnLowered)
+            {%- when ReturnStrategy::Reconstruct(type_node, ffi_types) %}
+            val uniffiReturnDeconstructed = {{ type_node.lower_fn_kt() }}(uniffiReturn)
+            Scaffolding.{{ callable.result.async_complete_success_fn() }}(
+                uniffiKotlinFutureHandle,
+                {%- for _ in ffi_types %}
+                uniffiReturnDeconstructed.v{{ loop.index0 }},
+                {%- endfor %}
+            )
             {%- when ReturnStrategy::Void %}
             Scaffolding.{{ callable.result.async_complete_success_fn() }}(uniffiKotlinFutureHandle)
             {% endmatch %}

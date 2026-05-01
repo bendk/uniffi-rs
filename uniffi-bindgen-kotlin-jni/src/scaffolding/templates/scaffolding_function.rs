@@ -11,8 +11,11 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
     {{ ffi_arg.name_rs() }}: {{ ffi_arg.ty.type_rs() }},
     {%- endfor %}
 )
-{%- if let ReturnStrategy::Primitive(_, ffi_type) = callable.return_strategy() %} -> {{ ffi_type.type_rs() }}
-{%- endif %}
+{%- match callable.return_strategy() %}
+{%- when ReturnStrategy::Primitive(_, ffi_type) %} -> {{ ffi_type.type_rs() }}
+{%- when ReturnStrategy::Reconstruct(_, _) %} -> uniffi_jni::jobject
+{%- else %}
+{%- endmatch %}
 {
     uniffi::trace!("Calling {{ callable.name }}");
     // Safety:
@@ -73,16 +76,25 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
             let uniffi_return_value = match uniffi_return_value {
                 Ok(v) => v,
                 Err(uniffi_err) => {
-                    {%- if !callable.uses_buffer() %}
+                    {%- if throws_ty.uses_buffer() && callable.uses_buffer() %}
+                    // Safety:
+                    // * uniffi_env is a valid JNIEnv
+                    // * `uniffi_buf` points to a valid FFI buffer
+                    unsafe { {{ throws_ty.throw_error_fn_rs() }}(uniffi_env, &mut uniffi_buf, uniffi_err)?; };
+                    {%- elif throws_ty.uses_buffer() && !callable.uses_buffer() %}
                     // Need to allocate a new buffer for the exception since we didn't input one
                     let mut uniffi_buf = uniffi::FfiBuffer::new();
-                    {% endif %}
                     // Safety:
-                    // `uniffi_buf` points to a valid FFI buffer
+                    // * uniffi_env is a valid JNIEnv
+                    // * `uniffi_buf` points to a valid FFI buffer
                     unsafe { {{ throws_ty.throw_error_fn_rs() }}(uniffi_env, &mut uniffi_buf, uniffi_err)?; };
-                    {%- if !callable.uses_buffer() %}
                     uniffi_buf.free();
-                    {% endif %}
+                    {%- else %}
+                    // Safety:
+                    // * uniffi_env is a valid JNIEnv
+                    unsafe { {{ throws_ty.throw_error_fn_rs() }}(uniffi_env, uniffi_err)?; };
+                    {%- endif %}
+
                     return Ok(::std::default::Default::default());
                 }
             };
@@ -93,15 +105,24 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
             uniffi_buf.with_cursor(|uniffi_writer| {
                 {{ return_type.write_fn_rs() }}(uniffi_writer, uniffi_return_value)
             })?;
-            {%- when ReturnStrategy::Primitive(type_node, _) %}
-            let uniffi_return_value = {{ type_node.lower_fn_rs() }}(uniffi_env, uniffi_return_value)?;
-            {%- when ReturnStrategy::Void %}
-            {%- endmatch %}
-            {%- if callable.return_strategy().is_primitive() %}
-            Ok(uniffi_return_value)
-            {%- else %}
             Ok(())
-            {%- endif %}
+            {%- when ReturnStrategy::Primitive(type_node, _) %}
+            {{ type_node.lower_fn_rs() }}(uniffi_env, uniffi_return_value)
+            {%- when ReturnStrategy::Reconstruct(type_node, ffi_types) %}
+            let uniffi_return_deconstructed = {{ type_node.lower_fn_rs() }}(uniffi_env, uniffi_return_value)?;
+            {{ type_node.lift_kt_from_rust_var() }}.call_object(
+                uniffi_env,
+                [
+                    {%- for ffi_type in ffi_types %}
+                    uniffi_jni::jvalue {
+                        {{ ffi_type.jvalue_field() }}: uniffi_return_deconstructed.{{ loop.index0 }},
+                    },
+                    {%- endfor %}
+                ]
+            ).to_anyhow_result(uniffi_env, "{{ type_node.lift_fn_kt() }}")
+            {%- when ReturnStrategy::Void %}
+            Ok(())
+            {%- endmatch %}
         })
     }
 }
@@ -149,9 +170,9 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
                     Err(uniffi_err) => {
                         return UniffiAnyhowResult::Ok(::std::result::Result::Err((
                             uniffi_err, 
-                            {%- if callable.uses_buffer() %}
+                            {%- if throws_ty.uses_buffer() && callable.uses_buffer() %}
                             ::std::option::Option::Some(uniffi_buf)
-                            {%- else %}
+                            {%- elif throws_ty.uses_buffer() && !callable.uses_buffer() %}
                             ::std::option::Option::<uniffi::FfiBuffer>::None,
                             {%- endif %}
                         )));
@@ -159,21 +180,16 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
                 };
                 {%- endif %}
 
-                {%- match callable.return_strategy() %}
-                {%- when ReturnStrategy::FfiBuffer(return_type) %}
-                uniffi_buf.with_cursor(|uniffi_writer| {
-                    {{ return_type.write_fn_rs() }}(uniffi_writer, uniffi_return_value)
-                })?;
-                let uniffi_return_value = ();
-                {%- else %}
-                {%- endmatch %}
+                {%- if callable.return_strategy().is_ffi_buffer() %}
+                let uniffi_return_value = (uniffi_return_value, uniffi_buf);
+                {%- endif %}
                 {%- if callable.throws_type().is_none() %}
                 UniffiAnyhowResult::Ok(uniffi_return_value)
                 {%- else %}
                 UniffiAnyhowResult::Ok(::std::result::Result::Ok(uniffi_return_value))
                 {%- endif %}
             };
-            Ok(UniffiRustFuture::new(uniffi_future).into_handle())
+            Ok(UniffiRustFuture::<{{ callable.result.async_rust_future_output() }}>::new(uniffi_future).into_handle())
         })
     }
 }
