@@ -377,6 +377,7 @@ pub enum FfiType {
     Float64,
     Boolean,
     String,
+    NullableString,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]

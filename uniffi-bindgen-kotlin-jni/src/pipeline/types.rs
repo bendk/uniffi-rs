@@ -229,6 +229,19 @@ impl TypeNode {
             Type::Float64 => "uniffi_jni::lower_f64".into(),
             Type::Boolean => "uniffi_jni::lower_bool".into(),
             Type::String => "uniffi_jni::lower_string".into(),
+            Type::Optional { inner_type } => match &**inner_type {
+                Type::Boolean => "uniffi_jni::lower_option_bool".into(),
+                Type::Int8 => "uniffi_jni::lower_option_i8".into(),
+                Type::UInt8 => "uniffi_jni::lower_option_u8".into(),
+                Type::Int16 => "uniffi_jni::lower_option_i16".into(),
+                Type::UInt16 => "uniffi_jni::lower_option_u16".into(),
+                Type::Int32 => "uniffi_jni::lower_option_i32".into(),
+                Type::UInt32 => "uniffi_jni::lower_option_u32".into(),
+                Type::Float32 => "uniffi_jni::lower_option_f32".into(),
+                Type::Float64 => "uniffi_jni::lower_option_f64".into(),
+                Type::String => "uniffi_jni::lower_option_string".into(),
+                _ => self.fn_name_rs("lower"),
+            },
             _ => self.fn_name_rs("lower"),
         }
     }
@@ -252,6 +265,19 @@ impl TypeNode {
             Type::Float64 => "uniffi_jni::lift_f64".into(),
             Type::Boolean => "uniffi_jni::lift_bool".into(),
             Type::String => "uniffi_jni::lift_string".into(),
+            Type::Optional { inner_type } => match &**inner_type {
+                Type::Boolean => "uniffi_jni::lift_option_bool".into(),
+                Type::Int8 => "uniffi_jni::lift_option_i8".into(),
+                Type::UInt8 => "uniffi_jni::lift_option_u8".into(),
+                Type::Int16 => "uniffi_jni::lift_option_i16".into(),
+                Type::UInt16 => "uniffi_jni::lift_option_u16".into(),
+                Type::Int32 => "uniffi_jni::lift_option_i32".into(),
+                Type::UInt32 => "uniffi_jni::lift_option_u32".into(),
+                Type::Float32 => "uniffi_jni::lift_option_f32".into(),
+                Type::Float64 => "uniffi_jni::lift_option_f64".into(),
+                Type::String => "uniffi_jni::lift_option_string".into(),
+                _ => self.fn_name_rs("lift"),
+            },
             _ => self.fn_name_rs("lift"),
         }
     }
@@ -311,6 +337,19 @@ impl TypeNode {
             Type::Float64 => "lowerDouble".into(),
             Type::Boolean => "lowerBoolean".into(),
             Type::String => "lowerString".into(),
+            Type::Optional { inner_type } => match &**inner_type {
+                Type::Boolean => "lowerOptionBoolean".into(),
+                Type::Int8 => "lowerOptionByte".into(),
+                Type::UInt8 => "lowerOptionUByte".into(),
+                Type::Int16 => "lowerOptionShort".into(),
+                Type::UInt16 => "lowerOptionUShort".into(),
+                Type::Int32 => "lowerOptionInt".into(),
+                Type::UInt32 => "lowerOptionUInt".into(),
+                Type::Float32 => "lowerOptionFloat".into(),
+                Type::Float64 => "lowerOptionDouble".into(),
+                Type::String => "lowerOptionString".into(),
+                _ => self.fn_name_kt("lower"),
+            },
             _ => self.fn_name_kt("lower"),
         }
     }
@@ -334,6 +373,19 @@ impl TypeNode {
             Type::Float64 => "liftDouble".into(),
             Type::Boolean => "liftBoolean".into(),
             Type::String => "liftString".into(),
+            Type::Optional { inner_type } => match &**inner_type {
+                Type::Boolean => "liftOptionBoolean".into(),
+                Type::Int8 => "liftOptionByte".into(),
+                Type::UInt8 => "liftOptionUByte".into(),
+                Type::Int16 => "liftOptionShort".into(),
+                Type::UInt16 => "liftOptionUShort".into(),
+                Type::Int32 => "liftOptionInt".into(),
+                Type::UInt32 => "liftOptionUInt".into(),
+                Type::Float32 => "liftOptionFloat".into(),
+                Type::Float64 => "liftOptionDouble".into(),
+                Type::String => "liftOptionString".into(),
+                _ => self.fn_name_kt("lift"),
+            },
             _ => self.fn_name_kt("lift"),
         }
     }

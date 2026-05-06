@@ -20,6 +20,19 @@ impl FfiType {
             Type::Float64 => Some(Self::Float64),
             Type::Boolean => Some(Self::Boolean),
             Type::String => Some(Self::String),
+            Type::Optional { inner_type } => match &**inner_type {
+                Type::UInt8 => Some(Self::Int64),
+                Type::Int8 => Some(Self::Int64),
+                Type::UInt16 => Some(Self::Int64),
+                Type::Int16 => Some(Self::Int64),
+                Type::UInt32 => Some(Self::Int64),
+                Type::Int32 => Some(Self::Int64),
+                Type::Boolean => Some(Self::Int64),
+                Type::Float32 => Some(Self::Int32),
+                Type::Float64 => Some(Self::Int64),
+                Type::String => Some(Self::NullableString),
+                _ => None,
+            },
             _ => None,
         }
     }
@@ -40,6 +53,7 @@ impl FfiType {
             Self::Float64 => "Double".into(),
             Self::Boolean => "Boolean".into(),
             Self::String => "String".into(),
+            Self::NullableString => "String?".into(),
         }
     }
 
@@ -58,7 +72,7 @@ impl FfiType {
             Self::Float64 => "f64".into(),
             Self::Boolean => "bool".into(),
             // JNI uses the `jstring` type, we convert to `String` in the lift/lower functions.
-            Self::String => "uniffi_jni::jstring".into(),
+            Self::String | Self::NullableString => "uniffi_jni::jstring".into(),
         }
     }
 
@@ -72,6 +86,7 @@ impl FfiType {
             Self::Float64 => "0.0".into(),
             Self::Boolean => "false".into(),
             Self::String => "\"\"".into(),
+            Self::NullableString => "null".into(),
         }
     }
 
@@ -84,7 +99,7 @@ impl FfiType {
             Self::Float32 => "F",
             Self::Float64 => "D",
             Self::Boolean => "Z",
-            Self::String => "Ljava/lang/String;",
+            Self::String | Self::NullableString => "Ljava/lang/String;",
         }
     }
 
@@ -97,7 +112,7 @@ impl FfiType {
             Self::Float32 => "f",
             Self::Float64 => "d",
             Self::Boolean => "z",
-            Self::String => "l",
+            Self::String | Self::NullableString => "l",
         }
     }
 }
@@ -172,6 +187,15 @@ fn create_deconstructable_types_recurse<'a>(
                 }
             }
             field_ffi_types
+        }
+        Type::Optional { inner_type } => {
+            match create_deconstructable_types_recurse(inner_type, context)? {
+                None => return Ok(None),
+                Some(mut ffi_types) => {
+                    ffi_types.insert(0, FfiType::Boolean);
+                    ffi_types
+                }
+            }
         }
         // TODO handle more types
         _ => return Ok(None),

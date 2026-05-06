@@ -10,6 +10,30 @@ fun liftFloat(v: Float): Float = v
 fun liftDouble(v: Double): Double = v
 fun liftBoolean(v: Boolean): Boolean = v
 fun liftString(v: String): String = v
+fun liftOptionUByte(v: Long): UByte? = if (v == Long.MAX_VALUE) { null } else { v.toUByte() }
+fun liftOptionByte(v: Long): Byte? = if (v == Long.MAX_VALUE) { null } else { v.toByte() }
+fun liftOptionUShort(v: Long): UShort? = if (v == Long.MAX_VALUE) { null } else { v.toUShort() }
+fun liftOptionShort(v: Long): Short? = if (v == Long.MAX_VALUE) { null } else { v.toShort() }
+fun liftOptionUInt(v: Long): UInt? = if (v == Long.MAX_VALUE) { null } else { v.toUInt() }
+fun liftOptionInt(v: Long): Int? = if (v == Long.MAX_VALUE) { null } else { v.toInt() }
+fun liftOptionBoolean(v: Long): Boolean? = if (v == Long.MAX_VALUE) { null } else { v == 1L }
+fun liftOptionString(v: String?): String? = v
+
+fun liftOptionFloat(v: Int): Float? {
+    return if (v == 0xFFFF_FFFF.toInt()) {
+        null
+    } else {
+        Float.fromBits(v)
+    }
+}
+
+fun liftOptionDouble(v: Long): Double? {
+    return if (v.toULong() == 0xFFFF_FFFF_FFFF_FFFFuL) {
+        null
+    } else {
+        Double.fromBits(v)
+    }
+}
 
 fun lowerUByte(v: UByte): Byte = v.toByte()
 fun lowerByte(v: Byte): Byte = v
@@ -23,6 +47,44 @@ fun lowerFloat(v: Float): Float = v
 fun lowerDouble(v: Double): Double = v
 fun lowerBoolean(v: Boolean): Boolean = v
 fun lowerString(v: String): String = v
+fun lowerOptionUByte(v: UByte?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
+fun lowerOptionByte(v: Byte?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
+fun lowerOptionUShort(v: UShort?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
+fun lowerOptionShort(v: Short?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
+fun lowerOptionUInt(v: UInt?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
+fun lowerOptionInt(v: Int?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
+fun lowerOptionBoolean(v: Boolean?): Long = if (v == null) { Long.MAX_VALUE } else { if (v) { 1 } else { 0 } }
+fun lowerOptionString(v: String?): String? = v
+
+fun lowerOptionFloat(v: Float?): Int {
+    return if (v == null) {
+        0xFFFF_FFFF.toInt()
+    } else {
+        val bits = v.toRawBits()
+        if (bits == 0xFFFF_FFFF.toInt()) {
+            // The float was encoded using our special-cased NaN value.
+            // Convert it to the "preferred" NaN value
+            0xFFC0_0000.toInt()
+        } else {
+            bits
+        }
+    }
+}
+
+fun lowerOptionDouble(v: Double?): Long {
+    return if (v == null) {
+        0xFFFF_FFFF_FFFF_FFFFuL.toLong()
+    } else {
+        val bits = v.toRawBits()
+        if (bits.toULong() == 0xFFFF_FFFF_FFFF_FFFFuL) {
+            // The float was encoded using our special-cased NaN value.
+            // Convert it to the "preferred" NaN value
+            0xFFF8_0000
+        } else {
+            bits
+        }
+    }
+}
 
 {#
  # Define lift functions for FfiBuffer-based types.
