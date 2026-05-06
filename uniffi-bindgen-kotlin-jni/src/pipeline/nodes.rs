@@ -258,6 +258,7 @@ pub struct Callable {
 
 #[derive(Debug, Clone, Node)]
 pub struct CallableResult {
+    pub for_callback: bool,
     pub return_type: Option<TypeNode>,
     pub throws_type: Option<TypeNode>,
     // Unique ID for this CallableResult
@@ -721,7 +722,7 @@ impl Callable {
     pub fn uses_buffer(&self) -> bool {
         self.arguments.iter().any(Argument::uses_buffer)
             || self.has_receiver()
-            || self.return_type().is_some_and(TypeNode::uses_buffer)
+            || self.return_strategy().is_ffi_buffer()
     }
 
     pub fn return_strategy(&self) -> ReturnStrategy<'_> {
@@ -767,7 +768,13 @@ impl CallableResult {
                     ReturnStrategy::Primitive(type_node, *ffi_type)
                 }
                 Some(LowerableType::Deconstructable(ffi_types)) => {
-                    ReturnStrategy::Reconstruct(type_node, ffi_types)
+                    // Only choose `Reconstruct` if the number of FFI types is large.
+                    // See `DESIGN.md` for the reasoning
+                    if ffi_types.len() >= 5 {
+                        ReturnStrategy::Reconstruct(type_node, ffi_types)
+                    } else {
+                        ReturnStrategy::FfiBuffer(type_node)
+                    }
                 }
                 None => ReturnStrategy::FfiBuffer(type_node),
             },
@@ -837,13 +844,15 @@ impl CallableResult {
     }
 
     pub fn async_rust_future_output(&self) -> String {
-        let ok_type = match &self.return_type {
-            Some(ty) if ty.uses_buffer() => {
+        let ok_type = match self.return_strategy() {
+            ReturnStrategy::FfiBuffer(type_node) => {
                 // Pass both the value and the FfiBuffer to write it to
-                format!("({}, uniffi::FfiBuffer)", &ty.type_rs)
+                format!("({}, uniffi::FfiBuffer)", &type_node.type_rs)
             }
-            Some(ty) => ty.type_rs.clone(),
-            None => "()".to_string(),
+            ReturnStrategy::Primitive(type_node, _) | ReturnStrategy::Reconstruct(type_node, _) => {
+                type_node.type_rs.clone()
+            }
+            ReturnStrategy::Void => "()".to_string(),
         };
         let expected_result_type = if let Some(throws_type) = &self.throws_type {
             let throws_type_rs = &throws_type.type_rs;

@@ -11,17 +11,20 @@ pub fn map_callable(input: general::Callable, context: &Context) -> Result<Calla
     let fully_qualified_name_rs = fully_qualified_name_rs(&input, context)?;
     let result_id = context.get_callback_result_id(&input)?;
     let arguments = map_arguments(input.arguments, context)?;
+    let kind = input.kind.map_node(context)?;
+    let result = CallableResult {
+        for_callback: kind.is_callback_method(),
+        return_type: input.return_type.ty.map_node(context)?,
+        throws_type: input.throws_type.ty.map_node(context)?,
+        id: result_id,
+    };
     Ok(Callable {
-        kind: input.kind.map_node(context)?,
+        kind,
         name: input.name,
         orig_name: input.orig_name,
         is_async: input.async_data.is_some(),
         arguments,
-        result: CallableResult {
-            return_type: input.return_type.ty.map_node(context)?,
-            throws_type: input.throws_type.ty.map_node(context)?,
-            id: result_id,
-        },
+        result,
         fully_qualified_name_rs,
     })
 }

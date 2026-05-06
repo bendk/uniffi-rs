@@ -75,6 +75,8 @@ Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
 * Returning values:
     * Primitive types are returned directly
     * Deconstructable types:
+        * Check if we expect a performance increase from using the method described below, if not
+          return the value via a FFI buffer (see `Returning deconstructable types from Rust`)
         * Deconstructed the value into primitives
         * Pass the primitives to the Kotlin lift function via JNI, getting back a `jobject`.
         * Return the resulting `jobject` back to Kotlin.
@@ -118,7 +120,10 @@ Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
         * Kotlin passes a `Completion` object to the poll function.
         * Before returning `UNIFFI_RUST_FUTURE_COMPLETE`, Rust passes the return value to `completion.complete()`.
         * Kotlin returns the passed value from the async function.
-    * Deconstructable types work like primitive values, except Rust passes multiple primitive values to `complete()`
+    * Deconstructable types:
+        * Check if we expect a performance increase from using the method described below, if not
+          return the value via a FFI buffer (see `Returning deconstructable types from Rust`)
+        * Rust passes the primitive values to `complete()`
       and Kotlin reconstructs the return value from those.
     * Otherwise, Rust inputs a FFI buffer handle in the initial FFI call
       and writes the return value to it
@@ -147,6 +152,24 @@ Errors/exceptions are handled using JNI rather than `uniffi::RustCallStatus`:
     * Rust defines separate completion functions to handle errors/unexpected errors.
     * Those functions work similarly to the success completion function,
       they input the sender channel, construct the result value, then send it via the channel.
+
+### Returning deconstructable types from Rust
+
+There are 2 strategies that we can use to do this.
+The FFI buffer strategy requires allocating a buffer
+and making a Rust call to get each primitive value.
+The deconstruct/reconstruct strategy requires making a single Kotlin call,
+passing it each primitive value.
+
+The performance tradeoff here is actually not so simple,
+since making a Kotlin call is several times slower than either a Rust call or a memory allocation.
+If a type only contains a few primitive values, using a FFI buffer is actually the faster strategy.
+
+To deal with this, we count the number of primitives that a type deconstructions to.
+If there are less than 5 primitives, we use the FFI buffer strategy
+otherwise we use the deconstruct/reconstruct strategy
+5 was chosen based on benchmarking experiments performed on bdk's laptop.
+It may not be the ideal number, but it seems like a reasonable choice.
 
 # Kotlin `uniffi` package
 
