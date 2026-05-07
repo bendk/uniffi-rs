@@ -19,10 +19,7 @@ pub fn map_type_node(type_node: general::TypeNode, context: &Context) -> Result<
         type_kt: type_kt(&type_node.ty, context)?,
         type_rs: type_rs(&type_node.ty, context)?,
         has_from_unexpected_callback_error_impl: type_node.has_from_unexpected_callback_error_impl,
-        id: *context
-            .type_id_map
-            .get(&type_node.ty)
-            .ok_or_else(|| anyhow!("Type missing from Context.type_id_map: {:?}", type_node.ty))?,
+        id: context.get_type_id(&type_node.ty)?,
         ty: type_node.ty.map_node(context)?,
         lowerable,
     })

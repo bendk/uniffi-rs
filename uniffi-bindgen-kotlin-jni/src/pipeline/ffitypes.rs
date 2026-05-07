@@ -33,6 +33,8 @@ impl FfiType {
                 Type::String => Some(Self::NullableString),
                 _ => None,
             },
+            Type::Interface { imp, .. } if !imp.is_trait_interface() => Some(Self::Int64),
+            Type::CallbackInterface { .. } => Some(Self::Int64),
             _ => None,
         }
     }
@@ -196,6 +198,14 @@ fn create_deconstructable_types_recurse<'a>(
                     ffi_types
                 }
             }
+        }
+        Type::Interface { imp, .. } if imp.is_trait_interface() => {
+            // Trait interfaces are represented by a wide pointer that
+            // can be deconstructed into 2 i64 values.
+            //
+            // Note: Non-trait interface can be lowered into a single i64 which handled by
+            // [FfiType::for_primitive].
+            vec![FfiType::Int64, FfiType::Int64]
         }
         // TODO handle more types
         _ => return Ok(None),

@@ -7,7 +7,7 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
     {%- if callable.uses_buffer() %}uniffi_buf_handle: i64,{% endif %}
-    {%- for ffi_arg in callable.ffi_arguments() %}
+    {%- for ffi_arg in callable.ffi_arguments_including_receiver() %}
     {{ ffi_arg.name_rs() }}: {{ ffi_arg.ty.type_rs() }},
     {%- endfor %}
 )
@@ -132,7 +132,7 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
     {%- if callable.uses_buffer() %}uniffi_buf_handle: i64,{% endif %}
-    {%- for ffi_arg in callable.ffi_arguments() %}
+    {%- for ffi_arg in callable.ffi_arguments_including_receiver() %}
     {{ ffi_arg.name_rs() }}: {{ ffi_arg.ty.type_rs() }},
     {%- endfor %}
 ) -> i64 {

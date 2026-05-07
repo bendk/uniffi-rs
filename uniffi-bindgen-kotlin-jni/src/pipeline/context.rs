@@ -68,6 +68,13 @@ impl Context {
         });
     }
 
+    pub fn get_type_id(&self, ty: &Type) -> Result<usize> {
+        self.type_id_map
+            .get(ty)
+            .cloned()
+            .ok_or_else(|| anyhow!("Type missing from Context.type_id_map: {ty:?}"))
+    }
+
     fn populate_callable_result_id_map(&mut self, root: &general::Root) -> Result<()> {
         let mut map = IndexMap::new();
         let mut counter = 0..;

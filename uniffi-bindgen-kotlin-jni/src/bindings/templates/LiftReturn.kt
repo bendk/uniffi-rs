@@ -1,6 +1,5 @@
-{%- if callable.is_primary_constructor() %}
-val uniffiReader = uniffi.FfiBufferCursor(uniffiBuffer)
-this.uniffiHandle = uniffi.readLong(uniffiReader)
+{%- if let CallableKind::Constructor { self_type, primary: true } = callable.kind %}
+this.uniffiHandle = uniffiReturn
 {%- else %}
 {%- match callable.return_strategy() %}
 {%- when ReturnStrategy::FfiBuffer(return_type) %}

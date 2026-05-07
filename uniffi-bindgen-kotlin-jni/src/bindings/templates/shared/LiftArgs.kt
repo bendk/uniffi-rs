@@ -1,7 +1,7 @@
-{% for a in meth.callable.arguments %}
-{%- if loop.first %}
+{%- if callable.uses_buffer() %}
 val uniffiReader = FfiBufferCursor(uniffiBuffer)
 {%- endif %}
+{% for a in meth.callable.arguments %}
 {%- match a.strategy %}
 {%- when ArgStrategy::Primitive(ffi_arg) %}
 val {{ a.name_kt() }} = {{ a.ty.lift_fn_kt() }}({{ ffi_arg.name_kt() }})

@@ -10,8 +10,29 @@ const MAX_PRIMITIVE_ARGS: usize = 32;
 pub fn map_callable(input: general::Callable, context: &Context) -> Result<Callable> {
     let fully_qualified_name_rs = fully_qualified_name_rs(&input, context)?;
     let result_id = context.get_callback_result_id(&input)?;
-    let arguments = map_arguments(input.arguments, context)?;
     let kind = input.kind.map_node(context)?;
+    let mut allocator = FfiArgAllocator::default();
+    let receiver = match &kind {
+        CallableKind::Method {
+            self_type,
+            takes_self_by_arc,
+            ..
+        } => Some(Receiver {
+            ty: self_type.clone(),
+            strategy: allocator.receiver_strategy_for_type(
+                self_type,
+                *takes_self_by_arc,
+                context,
+            )?,
+        }),
+        CallableKind::VTableMethod { self_type, .. } => Some(Receiver {
+            ty: self_type.clone(),
+            strategy: allocator.receiver_strategy_for_type(self_type, false, context)?,
+        }),
+        _ => None,
+    };
+
+    let arguments = map_arguments(&mut allocator, input.arguments, context)?;
     let result = CallableResult {
         for_callback: kind.is_callback_method(),
         return_type: input.return_type.ty.map_node(context)?,
@@ -23,6 +44,7 @@ pub fn map_callable(input: general::Callable, context: &Context) -> Result<Calla
         name: input.name,
         orig_name: input.orig_name,
         is_async: input.async_data.is_some(),
+        receiver,
         arguments,
         result,
         fully_qualified_name_rs,
@@ -98,7 +120,7 @@ pub fn constructor_jni_method_name(
 
 pub fn method_jni_method_name(meth: &general::Method, context: &Context) -> Result<String> {
     let self_ty = match &meth.callable.kind {
-        general::CallableKind::Method { self_type }
+        general::CallableKind::Method { self_type, .. }
         | general::CallableKind::VTableMethod { self_type, .. } => self_type,
         _ => bail!("Invalid method callable kind: {:?}", meth.callable.kind),
     };
@@ -113,32 +135,15 @@ pub fn method_jni_method_name(meth: &general::Method, context: &Context) -> Resu
     ))
 }
 
-fn map_arguments(inputs: Vec<general::Argument>, context: &Context) -> Result<Vec<Argument>> {
+fn map_arguments(
+    allocator: &mut FfiArgAllocator,
+    inputs: Vec<general::Argument>,
+    context: &Context,
+) -> Result<Vec<Argument>> {
     let mut mapped = vec![];
-    let mut allocator = FfiArgAllocator::default();
     for input in inputs {
         let ty = input.ty.map_node(context)?;
-        let strategy = match &ty.lowerable {
-            Some(lowerable) => match (allocator.can_lower_args(lowerable), lowerable) {
-                (false, _) => ArgStrategy::FfiBuffer,
-                (true, LowerableType::Primitive(ffi_type)) => ArgStrategy::Primitive(FfiArgument {
-                    name: allocator.next(),
-                    ty: ffi_type.clone(),
-                }),
-                (true, LowerableType::Deconstructable(primitive_types)) => {
-                    ArgStrategy::Deconstruct(
-                        primitive_types
-                            .iter()
-                            .map(|ffi_type| FfiArgument {
-                                name: allocator.next(),
-                                ty: ffi_type.clone(),
-                            })
-                            .collect(),
-                    )
-                }
-            },
-            None => ArgStrategy::FfiBuffer,
-        };
+        let strategy = allocator.strategy_for_type(&ty);
         mapped.push(Argument {
             name: input.name,
             orig_name: input.orig_name,
@@ -161,6 +166,75 @@ impl FfiArgAllocator {
         let i = self.0;
         self.0 += 1;
         format!("uniffi_arg_{i}")
+    }
+
+    pub fn strategy_for_type(&mut self, ty: &TypeNode) -> ArgStrategy {
+        match &ty.lowerable {
+            Some(lowerable) => match (self.can_lower_args(lowerable), lowerable) {
+                (false, _) => ArgStrategy::FfiBuffer,
+                (true, LowerableType::Primitive(ffi_type)) => ArgStrategy::Primitive(FfiArgument {
+                    name: self.next(),
+                    ty: *ffi_type,
+                }),
+                (true, LowerableType::Deconstructable(primitive_types)) => {
+                    ArgStrategy::Deconstruct(
+                        primitive_types
+                            .iter()
+                            .map(|ffi_type| FfiArgument {
+                                name: self.next(),
+                                ty: *ffi_type,
+                            })
+                            .collect(),
+                    )
+                }
+            },
+            None => ArgStrategy::FfiBuffer,
+        }
+    }
+
+    pub fn receiver_strategy_for_type(
+        &mut self,
+        ty: &TypeNode,
+        takes_self_by_arc: bool,
+        context: &Context,
+    ) -> Result<ReceiverStrategy> {
+        Ok(match &ty.ty {
+            Type::Interface {
+                imp,
+                orig_name,
+                namespace,
+                ..
+            } if !takes_self_by_arc => {
+                let inner_type_name = format!(
+                    "{}::{}",
+                    context.rust_module_path_for_type(namespace, orig_name)?,
+                    names::escape_rust(orig_name),
+                );
+
+                if !imp.is_trait_interface() {
+                    ReceiverStrategy::InterfaceRef(
+                        inner_type_name,
+                        FfiArgument {
+                            name: self.next(),
+                            ty: FfiType::Int64,
+                        },
+                    )
+                } else {
+                    ReceiverStrategy::TraitInterfaceRef(
+                        inner_type_name,
+                        FfiArgument {
+                            name: self.next(),
+                            ty: FfiType::Int64,
+                        },
+                        FfiArgument {
+                            name: self.next(),
+                            ty: FfiType::Int64,
+                        },
+                    )
+                }
+            }
+            _ => ReceiverStrategy::Arg(self.strategy_for_type(ty)),
+        })
     }
 
     pub fn can_lower_args(&self, lowerable: &LowerableType) -> bool {

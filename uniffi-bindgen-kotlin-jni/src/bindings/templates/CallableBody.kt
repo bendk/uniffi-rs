@@ -8,7 +8,7 @@ try {
 {%- if !callable.is_async %}
 val uniffiReturn = uniffi.Scaffolding.{{ jni_method_name }}(
     {%- if callable.uses_buffer() %}uniffiBuffer,{% endif %}
-    {%- for arg in callable.ffi_arguments() %}
+    {%- for arg in callable.ffi_arguments_including_receiver() %}
     {{ arg.name_kt() }},
     {%- endfor %}
 )
@@ -16,7 +16,7 @@ val uniffiReturn = uniffi.Scaffolding.{{ jni_method_name }}(
 {%- else %}
 val uniffiFuture = uniffi.Scaffolding.{{ jni_method_name }}(
     {%- if callable.uses_buffer() %}uniffiBuffer,{% endif %}
-    {%- for arg in callable.ffi_arguments() %}
+    {%- for arg in callable.ffi_arguments_including_receiver() %}
     {{ arg.name_kt() }},
     {%- endfor %}
 )

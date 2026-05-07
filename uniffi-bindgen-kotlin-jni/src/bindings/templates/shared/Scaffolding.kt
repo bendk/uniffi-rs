@@ -23,7 +23,7 @@ object Scaffolding {
         {%- if scaffolding_function.callable.uses_buffer() %}
         uniffiBuffer: Long,
         {%- endif %}
-        {%- for ffi_arg in scaffolding_function.callable.ffi_arguments() %}
+        {%- for ffi_arg in scaffolding_function.callable.ffi_arguments_including_receiver() %}
         {{ ffi_arg.name_kt() }}: {{ ffi_arg.ty.type_kt() }},
         {%- endfor %}
     )

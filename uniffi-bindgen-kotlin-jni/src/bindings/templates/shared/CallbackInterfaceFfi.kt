@@ -184,10 +184,16 @@ fun {{ cbi.free_fn_kt() }}(handle: Long) {
 
 {# Class.kt generates a read/write function for trait interfaces #}
 {%- if !cbi.for_trait_interface %}
-// Note: no read function, since callback interfaces can't be passed back from Rust to Kotlin
-
 fun {{ cbi.self_type.write_fn_kt() }}(cursor: FfiBufferCursor, value: {{ type_name }}) {
     writeLong(cursor, {{ cbi.handle_map_kt() }}.insert(value))
 }
+
+{%- if let Some(LowerableType::Primitive(ffi_type)) = cbi.self_type.lowerable %}
+fun {{ cbi.self_type.lower_fn_kt() }}(value: {{ type_name }}): Long {
+    return {{ cbi.handle_map_kt() }}.insert(value)
+}
+
+// Note: no read/lift function, since callback interfaces can't be passed back from Rust to Kotlin
+{%- endif %}
 
 {%- endif %}

@@ -251,6 +251,7 @@ pub struct Callable {
     pub name: String,
     pub orig_name: String,
     pub is_async: bool,
+    pub receiver: Option<Receiver>,
     pub arguments: Vec<Argument>,
     pub result: CallableResult,
     pub fully_qualified_name_rs: String,
@@ -271,6 +272,7 @@ pub enum CallableKind {
     Function,
     Method {
         self_type: TypeNode,
+        takes_self_by_arc: bool,
     },
     Constructor {
         self_type: TypeNode,
@@ -298,6 +300,26 @@ pub struct Argument {
     pub optional: bool,
     pub default: Option<DefaultValueNode>,
     pub strategy: ArgStrategy,
+}
+
+#[derive(Debug, Clone, Node)]
+pub struct Receiver {
+    pub ty: TypeNode,
+    pub strategy: ReceiverStrategy,
+}
+
+#[derive(Debug, Clone, Node)]
+pub enum ReceiverStrategy {
+    /// Interface method that inputs `&self`
+    ///
+    /// We special-case this to avoid the add_ref call.
+    InterfaceRef(String, FfiArgument),
+    /// Trait interface method that inputs `&self`
+    ///
+    /// We special-case this to avoid the add_ref call.
+    TraitInterfaceRef(String, FfiArgument, FfiArgument),
+    /// Normal `ArgStrategy`
+    Arg(ArgStrategy),
 }
 
 #[derive(Debug, Clone, Node)]
@@ -692,6 +714,30 @@ impl Callable {
         ffi_args.into_iter()
     }
 
+    pub fn ffi_arguments_including_receiver(&self) -> impl Iterator<Item = &FfiArgument> {
+        let mut ffi_args = vec![];
+        if let Some(r) = &self.receiver {
+            match &r.strategy {
+                ReceiverStrategy::InterfaceRef(_, arg) => ffi_args.push(arg),
+                ReceiverStrategy::TraitInterfaceRef(_, arg, arg2) => ffi_args.extend([arg, arg2]),
+                ReceiverStrategy::Arg(arg_strategy) => match arg_strategy {
+                    ArgStrategy::Primitive(arg) => ffi_args.push(arg),
+                    ArgStrategy::Deconstruct(args) => ffi_args.extend(args),
+                    _ => (),
+                },
+            }
+        }
+
+        for a in self.arguments.iter() {
+            match &a.strategy {
+                ArgStrategy::Primitive(arg) => ffi_args.push(arg),
+                ArgStrategy::Deconstruct(args) => ffi_args.extend(args),
+                _ => (),
+            }
+        }
+        ffi_args.into_iter()
+    }
+
     /// Get an argument list without any defaults
     ///
     /// Used when implementing a method for an interface, in that case you can't specify a default.
@@ -720,10 +766,17 @@ impl Callable {
         matches!(self.kind, CallableKind::VTableMethod { .. })
     }
 
+    pub fn receiver_uses_buffer(&self) -> bool {
+        self.receiver.as_ref().is_some_and(|r| {
+            matches!(
+                &r.strategy,
+                ReceiverStrategy::Arg(strategy) if strategy.is_ffi_buffer(),
+            )
+        })
+    }
+
     pub fn uses_buffer(&self) -> bool {
-        self.arguments.iter().any(Argument::uses_buffer)
-            || self.has_receiver()
-            || self.return_strategy().is_ffi_buffer()
+        self.arguments.iter().any(Argument::uses_buffer) || self.return_strategy().is_ffi_buffer()
     }
 
     pub fn return_strategy(&self) -> ReturnStrategy<'_> {
@@ -731,7 +784,7 @@ impl Callable {
     }
 
     pub fn has_ffi_buffer_arg(&self) -> bool {
-        self.arguments.iter().any(Argument::uses_buffer)
+        self.receiver_uses_buffer() || self.arguments.iter().any(Argument::uses_buffer)
     }
 
     pub fn return_type(&self) -> Option<&TypeNode> {
@@ -1115,6 +1168,12 @@ impl Argument {
 
     pub fn uses_buffer(&self) -> bool {
         matches!(self.strategy, ArgStrategy::FfiBuffer)
+    }
+}
+
+impl ArgStrategy {
+    pub fn is_ffi_buffer(&self) -> bool {
+        matches!(self, ArgStrategy::FfiBuffer)
     }
 }
 

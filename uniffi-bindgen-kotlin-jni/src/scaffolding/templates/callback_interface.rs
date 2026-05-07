@@ -165,11 +165,13 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                 {%- endfor %}
             ])
                .to_anyhow_result(uniffi_env, "{{ meth.dispatch_fn_kt }}")
+                {%- if callable.uses_buffer() %}
                .map(|_| {
                     // Return `uniffi_buf` back so that we can continue to use it in the code below.
                     // This allows us to continue to use the `&mut` after "moving" it into AssertUnwindSafe
                     uniffi_buf
                 })
+                {%- endif %}
         })?
     };
     uniffi_receiver.await
@@ -212,6 +214,17 @@ pub fn {{ cbi.self_type.read_fn_rs() }}(
     }))
 }
 
-// Note: no write function, since passing callback interfaces from Rust to Kotlin is not allowed
+{%- if let Some(LowerableType::Primitive(ffi_type)) = cbi.self_type.lowerable %}
+pub fn {{ cbi.self_type.lift_fn_rs() }}(
+    uniffi_env: *mut uniffi_jni::JNIEnv,
+    handle: i64,
+) -> uniffi::Result<{{ type_name }}> {
+    Ok(::std::boxed::Box::new({{ cbi.impl_struct_rs() }} {
+        handle
+    }))
+}
+{%- endif %}
+
+// Note: no write/lower function, since passing callback interfaces from Rust to Kotlin is not allowed
 
 {%- endif %}

@@ -43,6 +43,7 @@ and sometimes we can avoid allocating a buffer altogether.
 The following types are passed as primitives:
   * Integers, floats, and bool.  Unsigned ints are converted to their signed counterparts.
   * `String` is passed as a `jstring` after a conversion step.
+  * Objects are passed an `i64` after calling `Arc::into_raw`.
   * `Option<T>` where T is an integer type with 32-bit width or less
     We can use the niche optimization on these by casting them to an `i64`
     and using `i64::MAX` for `None`.
@@ -58,6 +59,7 @@ We currently support this for:
   * Records where all fields are primitive or deconstructable.
   * `Option<T>` where T is deconstructable and we don't pass the type as a primitive.
     We use an extra `bool` value in this case.
+  * Trait interfaces are passed a pair of `i64` handles after calling `Arc::into_raw`.
 
 # Errors/exceptions
 

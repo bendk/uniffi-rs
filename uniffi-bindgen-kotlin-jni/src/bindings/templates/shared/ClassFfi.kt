@@ -1,5 +1,7 @@
 {%- let type_name = cls.self_type.type_kt %}
 {%- let impl_class_name = "{}.{}"|format(cls.package_name, cls.name_kt()) %}
+{%- let deconstructed_type = cls.self_type.deconstructed_type_kt() %}
+{%- let type_id = cls.self_type.id %}
 
 {%- match cls.imp %}
 {%- when ObjectImpl::Struct %}
@@ -13,6 +15,16 @@ fun {{ cls.self_type.write_fn_kt() }}(cursor: uniffi.FfiBufferCursor, value: {{ 
     value.uniffiAddRef()
     uniffi.writeLong(cursor, value.uniffiHandle)
 }
+
+fun {{ cls.self_type.lower_fn_kt() }}(value: {{ type_name }}): Long {
+    value.uniffiAddRef()
+    return value.uniffiHandle
+}
+
+fun {{ cls.self_type.lift_fn_kt() }}(handle: Long): {{ type_name }} {
+    return {{ impl_class_name }}(uniffi.WithHandle, handle)
+}
+
 {%- when ObjectImpl::Trait %}
 {#
  # Rust trait.
@@ -27,6 +39,17 @@ fun {{ cls.self_type.write_fn_kt() }}(cursor: uniffi.FfiBufferCursor, value: {{ 
     value.uniffiAddRef()
     uniffi.writeLong(cursor, value.uniffiHandle)
     uniffi.writeLong(cursor, value.uniffiHandle2)
+}
+
+class {{ deconstructed_type }}(val v0: Long, val v1: Long)
+
+fun {{ cls.self_type.lower_fn_kt() }}(value: {{ type_name }}): {{ deconstructed_type }} {
+    value.uniffiAddRef()
+    return {{ deconstructed_type }}(value.uniffiHandle, value.uniffiHandle2)
+}
+
+fun {{ cls.self_type.lift_fn_kt() }}(handle: Long, handle2: Long): {{ type_name }} {
+    return {{ impl_class_name }}(uniffi.WithHandle, handle, handle2)
 }
 
 {%- when ObjectImpl::CallbackTrait %}
@@ -56,6 +79,26 @@ fun {{ cls.self_type.write_fn_kt() }}(cursor: uniffi.FfiBufferCursor, value: {{ 
         uniffi.writeLong(cursor, 0)
         uniffi.writeLong(cursor, handle)
      }
+}
+
+class {{ deconstructed_type }}(val v0: Long, val v1: Long)
+
+fun {{ cls.self_type.lower_fn_kt() }}(value: {{ type_name }}): {{ deconstructed_type }} {
+    if (value is {{ impl_class_name }}) {
+        value.uniffiAddRef()
+        return {{ deconstructed_type }}(value.uniffiHandle, value.uniffiHandle2)
+     } else {
+        val handle = {{ cls.handle_map_kt() }}.insert(value)
+        return {{ deconstructed_type }}(0, handle)
+     }
+}
+
+fun {{ cls.self_type.lift_fn_kt() }}(handle: Long, handle2: Long): {{ type_name }} {
+    if (handle == 0L) {
+        return {{ cls.handle_map_kt() }}.remove(handle2)
+    } else {
+        return {{ impl_class_name }}(uniffi.WithHandle, handle, handle2)
+    }
 }
 
 {%- endmatch %}
