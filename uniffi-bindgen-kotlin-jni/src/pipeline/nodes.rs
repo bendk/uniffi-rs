@@ -284,6 +284,7 @@ pub struct Argument {
     pub name: String,
     pub orig_name: String,
     pub ty: TypeNode,
+    pub by_ref: bool,
     pub optional: bool,
     pub default: Option<DefaultValueNode>,
 }
@@ -763,6 +764,20 @@ impl Argument {
 
     pub fn name_rs(&self) -> String {
         names::escape_rust(&self.orig_name)
+    }
+
+    /// Generate code to pass this argument to the Rust function
+    ///
+    /// This is the argument name, optionally prefixed with things like `&`/`*`
+    pub fn pass_to_rust_fn(&self) -> String {
+        let name = self.name_rs();
+        match (self.by_ref, &self.ty.ty) {
+            // Interface refs: use `&*` to go from the `Arc<T>` to `&T`
+            (true, Type::Interface { imp, .. }) if imp.is_trait_interface() => format!("&*{name}"),
+            // All other refs just need `&`
+            (true, _) => format!("&{name}"),
+            _ => name,
+        }
     }
 }
 

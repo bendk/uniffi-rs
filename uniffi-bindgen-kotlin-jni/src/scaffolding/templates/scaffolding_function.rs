@@ -39,13 +39,13 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
             {%- when ScaffoldingFunctionKind::Method %}
             let uniffi_return_value = uniffi_self.{{ callable.name_rs() }}(
                 {%- for arg in callable.arguments %}
-                {{ arg.name_rs() }},
+                {{ arg.pass_to_rust_fn() }},
                 {%- endfor %}
             );
             {%- when ScaffoldingFunctionKind::Function %}
             let uniffi_return_value = {{ callable.fully_qualified_name_rs }}(
                 {%- for arg in callable.arguments %}
-                {{ arg.name_rs() }},
+                {{ arg.pass_to_rust_fn() }},
                 {%- endfor %}
             );
             {%- when ScaffoldingFunctionKind::TraitMethodDisplayFmt %}
