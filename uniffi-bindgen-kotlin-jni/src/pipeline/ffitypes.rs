@@ -6,7 +6,7 @@ use super::*;
 
 impl FfiType {
     /// Get the FFIType for a type -- if it's a primitive
-    pub fn for_primitive(ty: &Type) -> Option<Self> {
+    pub fn for_primitive(ty: &Type, context: &Context) -> Option<Self> {
         match ty {
             Type::Int8 => Some(Self::Int8),
             Type::Int16 => Some(Self::Int16),
@@ -35,6 +35,7 @@ impl FfiType {
             },
             Type::Interface { imp, .. } if !imp.is_trait_interface() => Some(Self::Int64),
             Type::CallbackInterface { .. } => Some(Self::Int64),
+            Type::Enum { .. } if context.primitive_enums.contains(ty) => Some(Self::UInt32),
             _ => None,
         }
     }
@@ -119,7 +120,10 @@ impl FfiType {
     }
 }
 
-pub fn create_deconstructable_map(root: &general::Root) -> Result<HashMap<Type, Vec<FfiType>>> {
+pub fn create_deconstructable_map(
+    root: &general::Root,
+    context: &Context,
+) -> Result<HashMap<Type, Vec<FfiType>>> {
     let records: HashMap<&Type, &general::Record> = root
         .namespaces
         .values()
@@ -133,11 +137,26 @@ pub fn create_deconstructable_map(root: &general::Root) -> Result<HashMap<Type, 
                 })
         })
         .collect();
+    let enums: HashMap<&Type, &general::Enum> = root
+        .namespaces
+        .values()
+        .flat_map(|namespace| {
+            namespace
+                .type_definitions
+                .iter()
+                .filter_map(|type_def| match type_def {
+                    general::TypeDefinition::Enum(en) => Some((&en.self_type.ty, en)),
+                    _ => None,
+                })
+        })
+        .collect();
 
     let mut context = CreateDeconstructableTypeContext {
         deconstructable_types: HashMap::new(),
         visited: HashSet::new(),
         records,
+        enums,
+        pipeline_context: context,
     };
 
     root.try_visit(|ty: &Type| {
@@ -152,6 +171,8 @@ struct CreateDeconstructableTypeContext<'a> {
     deconstructable_types: HashMap<Type, Vec<FfiType>>,
     visited: HashSet<&'a Type>,
     records: HashMap<&'a Type, &'a general::Record>,
+    enums: HashMap<&'a Type, &'a general::Enum>,
+    pipeline_context: &'a Context,
 }
 
 fn create_deconstructable_types_recurse<'a>(
@@ -176,7 +197,7 @@ fn create_deconstructable_types_recurse<'a>(
                 anyhow!("create_deconstructable_types_recurse: missing record {ty:?}")
             })?;
             for f in rec.fields.iter() {
-                if let Some(ffi_type) = FfiType::for_primitive(&f.ty.ty) {
+                if let Some(ffi_type) = FfiType::for_primitive(&f.ty.ty, context.pipeline_context) {
                     // Primitive field
                     field_ffi_types.push(ffi_type);
                 } else if let Some(child_primitives) =
@@ -189,6 +210,53 @@ fn create_deconstructable_types_recurse<'a>(
                 }
             }
             field_ffi_types
+        }
+        Type::Enum { .. } => {
+            let en = context.enums.get(ty).ok_or_else(|| {
+                anyhow!("create_deconstructable_types_recurse: missing enums {ty:?}")
+            })?;
+            if matches!(en.shape, EnumShape::Error { flat: true }) {
+                // Don't try to deconstruct flat errors, these have complex special-cased rules and
+                // it's not worth handling them.
+                return Ok(None);
+            }
+            // Start with just a u32 for the variant index, we'll add to this as we process each
+            // variant
+            let mut all_ffi_types = vec![FfiType::UInt32];
+            for v in en.variants.iter() {
+                let mut field_ffi_types = vec![];
+                for f in v.fields.iter() {
+                    if let Some(ffi_type) =
+                        FfiType::for_primitive(&f.ty.ty, context.pipeline_context)
+                    {
+                        // Primitive field
+                        field_ffi_types.push(ffi_type);
+                    } else if let Some(child_primitives) =
+                        create_deconstructable_types_recurse(ty, context)?
+                    {
+                        field_ffi_types.extend(child_primitives.iter());
+                    } else {
+                        // Field can't be deconstructed, give up on this record
+                        return Ok(None);
+                    }
+                }
+                // Strings must be nullable (see DESIGN.md for details)
+                let field_ffi_types = field_ffi_types.into_iter().map(|ffi_type| match ffi_type {
+                    FfiType::String => FfiType::NullableString,
+                    ffi_type => ffi_type,
+                });
+
+                // Extend `all_ffi_types` with the new FFI types for this variant.
+                // However, if there already is an existing ffi type, then we can re-use it.
+                let mut existing_types: HashSet<FfiType> =
+                    all_ffi_types.iter().skip(1).cloned().collect();
+                for ffi_type in field_ffi_types {
+                    if !existing_types.remove(&ffi_type) {
+                        all_ffi_types.push(ffi_type);
+                    }
+                }
+            }
+            all_ffi_types
         }
         Type::Optional { inner_type } => {
             match create_deconstructable_types_recurse(inner_type, context)? {

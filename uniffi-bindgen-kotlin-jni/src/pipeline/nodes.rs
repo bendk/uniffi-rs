@@ -87,6 +87,7 @@ pub struct Enum {
     pub kotlin_kind: KotlinEnumKind,
     pub docstring: Option<String>,
     pub recursive: bool,
+    pub lowerable: Option<LowerableEnum>,
 }
 
 /// Kotlin class that implements an interface by calling into Rust
@@ -355,6 +356,34 @@ pub struct DeconstructableRecord {
     pub source_fields: Vec<DeconstructableField>,
 }
 
+/// Enum that can be deconstructed into primitive values
+#[derive(Debug, Clone, Node)]
+pub enum LowerableEnum {
+    /// Enum without fields that we can lower to an int
+    Primitive,
+    /// Enum that we can lower to multiple primitive values
+    Deconstructable(DeconstructableEnum),
+}
+
+#[derive(Debug, Clone, Node)]
+pub struct DeconstructableEnum {
+    pub variants: Vec<DeconstructableVariant>,
+    pub ffi_fields: Vec<FfiField>,
+}
+
+#[derive(Debug, Clone, Node)]
+pub struct DeconstructableVariant {
+    pub name_kt: String,
+    pub orig_name: String,
+    pub fields_kind: FieldsKind,
+    // Rust fields for this variant
+    pub source_fields: Vec<DeconstructableField>,
+    // Where the enum FFI fields come from when handling this variant.
+    // Some of these will come from `source_fields`.  FFI fields only used by other variants will
+    // map to `EnumFfiFieldSource::Default`
+    pub enum_ffi_field_sources: Vec<EnumFfiFieldSource>,
+}
+
 /// Field of a deconstructable type
 ///
 /// This represents the field of the high-level type, which gets mapped to multiple FFI fields.
@@ -384,8 +413,29 @@ pub struct FfiField {
     pub ty: FfiType,
 }
 
+/// Field of a deconstructed enum variant
+#[derive(Debug, Clone, Node)]
+pub enum EnumFfiFieldSource {
+    // FFI field is not used for this variant, use the default value
+    Default {
+        ffi_type: FfiType,
+    },
+    // FFI field comes from a primitive source field
+    Primitive {
+        // Index of the field
+        source_field: usize,
+    },
+    // FFI field comes from from a deconstructed source field
+    Recursive {
+        // Index of the field
+        source_field: usize,
+        // Index of deconstructed tuple
+        index: usize,
+    },
+}
+
 /// Type that's passed across the FFI using JNI
-#[derive(Debug, Clone, Copy, Node)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Node)]
 pub enum FfiType {
     UInt8,
     Int8,
@@ -1124,6 +1174,12 @@ impl CallableKind {
 }
 
 impl Variant {
+    pub fn name_rs(&self) -> String {
+        names::escape_rust(&self.orig_name)
+    }
+}
+
+impl DeconstructableVariant {
     pub fn name_rs(&self) -> String {
         names::escape_rust(&self.orig_name)
     }

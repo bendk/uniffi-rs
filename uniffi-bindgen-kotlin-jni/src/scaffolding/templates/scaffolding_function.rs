@@ -168,14 +168,15 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
                 let uniffi_return_value = match uniffi_return_value {
                     Ok(v) => v,
                     Err(uniffi_err) => {
-                        return UniffiAnyhowResult::Ok(::std::result::Result::Err((
-                            uniffi_err, 
+                        return UniffiAnyhowResult::Ok(::std::result::Result::Err(
                             {%- if throws_ty.uses_buffer() && callable.uses_buffer() %}
-                            ::std::option::Option::Some(uniffi_buf)
+                            (uniffi_err, ::std::option::Option::Some(uniffi_buf))
                             {%- elif throws_ty.uses_buffer() && !callable.uses_buffer() %}
-                            ::std::option::Option::<uniffi::FfiBuffer>::None,
+                            (uniffi_err, ::std::option::Option::<uniffi::FfiBuffer>::None),
+                            {%- else %}
+                            uniffi_err
                             {%- endif %}
-                        )));
+                        ));
                     }
                 };
                 {%- endif %}

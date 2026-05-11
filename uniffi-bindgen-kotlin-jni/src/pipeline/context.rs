@@ -24,6 +24,8 @@ pub struct Context {
     pub current_enum: Option<general::Enum>,
     pub types_used_as_error: HashSet<Type>,
     pub callable_result_id_map: IndexMap<(Option<Type>, Option<Type>), usize>,
+    // Enums that can be represented by a u32 value
+    pub primitive_enums: HashSet<Type>,
     // FFI types for deconstructable types
     pub deconstructable_type_map: HashMap<Type, Vec<FfiType>>,
 }
@@ -53,9 +55,16 @@ impl Context {
                 self.types_used_as_error.insert(type_node.ty.clone());
             }
         });
+        root.visit(|en: &general::Enum| {
+            // We can represent an enum using a primitive if it has no field data, which means it's
+            // flat and not a flat error (which has an implicit string field).
+            if en.is_flat && !matches!(en.shape, EnumShape::Error { flat: true }) {
+                self.primitive_enums.insert(en.self_type.ty.clone());
+            }
+        });
         self.populate_type_id_map(root);
         self.populate_callable_result_id_map(root)?;
-        self.deconstructable_type_map = ffitypes::create_deconstructable_map(root)?;
+        self.deconstructable_type_map = ffitypes::create_deconstructable_map(root, self)?;
         Ok(())
     }
 

@@ -48,6 +48,7 @@ The following types are passed as primitives:
     We can use the niche optimization on these by casting them to an `i64`
     and using `i64::MAX` for `None`.
   * `Option<String>` also uses the niche optimization: `null` is used for `None`.
+  * Flat enums are passed using their discriminants.
 
 ## Deconstructable types
 
@@ -57,6 +58,16 @@ The primitive values are then passed as multiple FFI arguments.
 
 We currently support this for:
   * Records where all fields are primitive or deconstructable.
+  * Enums where all fields are primitive or deconstructable.
+    These are passed as the union of the FFI values required for each variant,
+    plus a `i32` value for the discriminant.
+    If a variant doesn't have a FFI field, then a default value is passed.
+    For this reason, strings are always nullable so we can pass `null`.
+    For example:
+        * variant A deconstructs to `(Int, String, Long)`
+        * variant B deconstructs to `(Int, Long)`
+        * variant C deconstructs to `(Long, Float)`
+        * The entire enum will be passed using `(Int, Int, String?, Long, Float)`
   * `Option<T>` where T is deconstructable and we don't pass the type as a primitive.
     We use an extra `bool` value in this case.
   * Trait interfaces are passed a pair of `i64` handles after calling `Arc::into_raw`.

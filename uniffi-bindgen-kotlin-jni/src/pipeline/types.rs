@@ -5,7 +5,7 @@
 use super::*;
 
 pub fn map_type_node(type_node: general::TypeNode, context: &Context) -> Result<TypeNode> {
-    let lowerable = if let Some(primitive) = FfiType::for_primitive(&type_node.ty) {
+    let lowerable = if let Some(primitive) = FfiType::for_primitive(&type_node.ty, context) {
         Some(LowerableType::Primitive(primitive))
     } else {
         context
@@ -488,5 +488,9 @@ impl TypeNode {
     /// Static Rust variable to call the Kotlin lift function from Rust
     pub fn lift_kt_from_rust_var(&self) -> String {
         format!("UNIFFI_CACHED_LIFT_KT_{}", self.id)
+    }
+
+    pub fn is_string(&self) -> bool {
+        matches!(self.ty, Type::String)
     }
 }

@@ -25,9 +25,9 @@ unsafe fn {{ type_node.throw_error_fn_rs() }}(
             {{ type_node.write_fn_rs() }}(uniffi_writer, uniffi_err)
         })?;
         {%- when Some(LowerableType::Deconstructable(_)) %}
-        let deconstructed = {{ type_node.lower_fn_rs() }}(uniffi_err)?;
+        let uniffi_lowered = {{ type_node.lower_fn_rs() }}(env, uniffi_err)?;
         {%- when Some(LowerableType::Primitive(_)) %}
-        ::std::compile_error("{{ type_node.type_rs }} used as an error type, but Kotlin doesn't support primitives as Exceptions");
+        let uniffi_lowered = {{ type_node.lower_fn_rs() }}(env, uniffi_err)?;
         {%- endmatch %}
 
         // Exceptions are expected, they'll be thrown when the native method returns.
@@ -40,10 +40,13 @@ unsafe fn {{ type_node.throw_error_fn_rs() }}(
             {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
             {%- for ffi_type in ffi_types %}
             uniffi_jni::jvalue {
-                {{ ffi_type.jvalue_field() }}: deconstructed.{{ loop.index0 }},
+                {{ ffi_type.jvalue_field() }}: uniffi_lowered.{{ loop.index0 }},
             },
             {%- endfor %}
-            {%- when Some(LowerableType::Primitive(_)) %}
+            {%- when Some(LowerableType::Primitive(ffi_type)) %}
+            uniffi_jni::jvalue {
+                {{ ffi_type.jvalue_field() }}: uniffi_lowered,
+            },
             {%- endmatch %}
         ]).to_anyhow_result(env, "{{ type_node.lift_fn_kt() }}")?;
         ((**env).v1_2.Throw)(env, throwable);
