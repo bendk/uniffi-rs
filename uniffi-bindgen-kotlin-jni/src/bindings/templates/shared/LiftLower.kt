@@ -10,6 +10,7 @@ fun liftFloat(v: Float): Float = v
 fun liftDouble(v: Double): Double = v
 fun liftBoolean(v: Boolean): Boolean = v
 fun liftString(v: String): String = v
+fun liftBytes(v: kotlin.ByteArray): kotlin.ByteArray = v
 fun liftOptionUByte(v: Long): UByte? = if (v == Long.MAX_VALUE) { null } else { v.toUByte() }
 fun liftOptionByte(v: Long): Byte? = if (v == Long.MAX_VALUE) { null } else { v.toByte() }
 fun liftOptionUShort(v: Long): UShort? = if (v == Long.MAX_VALUE) { null } else { v.toUShort() }
@@ -47,6 +48,7 @@ fun lowerFloat(v: Float): Float = v
 fun lowerDouble(v: Double): Double = v
 fun lowerBoolean(v: Boolean): Boolean = v
 fun lowerString(v: String): String = v
+fun lowerBytes(v: kotlin.ByteArray): kotlin.ByteArray = v
 fun lowerOptionUByte(v: UByte?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
 fun lowerOptionByte(v: Byte?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }
 fun lowerOptionUShort(v: UShort?): Long = if (v == null) { Long.MAX_VALUE } else { v.toLong() }

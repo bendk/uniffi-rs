@@ -133,7 +133,7 @@ fn jni_method_call_name(callable: &Callable) -> Result<String> {
             FfiType::Float32 => "call_float",
             FfiType::Float64 => "call_double",
             FfiType::Boolean => "call_boolean",
-            FfiType::String | FfiType::NullableString => "call_object",
+            FfiType::String | FfiType::NullableString | FfiType::ByteArray => "call_object",
         },
         Some(LowerableType::Deconstructable(_)) => "call_object",
         _ => "call_void",

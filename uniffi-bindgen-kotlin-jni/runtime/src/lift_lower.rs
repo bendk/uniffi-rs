@@ -160,3 +160,32 @@ pub unsafe fn lower_option_string(env: *mut JNIEnv, value: Option<String>) -> Re
         Some(value) => JniString::from(value).into_jstring(env),
     })
 }
+
+/// Lift a byte array
+///
+/// # Safety
+/// env must point to a valid JNIEnv
+pub unsafe fn lift_bytes(env: *mut JNIEnv, value: jbyteArray) -> Result<Vec<u8>> {
+    let len = ((**env).v1_2.GetArrayLength)(env, value);
+    let data = ((**env).v1_2.GetPrimitiveArrayCritical)(env, value, std::ptr::null_mut());
+    let slice = std::slice::from_raw_parts(data.cast::<u8>(), len as usize);
+    let vec = slice.to_vec();
+    ((**env).v1_2.ReleasePrimitiveArrayCritical)(env, value, data, 0);
+    Ok(vec)
+}
+
+/// Lower a byte array
+///
+/// # Safety
+/// env must point to a valid JNIEnv
+pub unsafe fn lower_bytes(env: *mut JNIEnv, value: Vec<u8>) -> Result<jbyteArray> {
+    let array = ((**env).v1_2.NewByteArray)(env, value.len() as i32);
+    ((**env).v1_2.SetByteArrayRegion)(
+        env,
+        array,
+        0,
+        value.len() as i32,
+        value.as_ptr().cast::<i8>(),
+    );
+    Ok(array)
+}

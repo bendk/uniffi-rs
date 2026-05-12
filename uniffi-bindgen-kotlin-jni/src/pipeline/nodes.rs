@@ -450,6 +450,7 @@ pub enum FfiType {
     Boolean,
     String,
     NullableString,
+    ByteArray,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]

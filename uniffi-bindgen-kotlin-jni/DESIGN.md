@@ -49,6 +49,7 @@ The following types are passed as primitives:
     and using `i64::MAX` for `None`.
   * `Option<String>` also uses the niche optimization: `null` is used for `None`.
   * Flat enums are passed using their discriminants.
+  * `Vec<u8>` gets passed a byte array.
 
 ## Deconstructable types
 

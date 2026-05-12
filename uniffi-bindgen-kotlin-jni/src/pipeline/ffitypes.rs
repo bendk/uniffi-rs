@@ -20,6 +20,7 @@ impl FfiType {
             Type::Float64 => Some(Self::Float64),
             Type::Boolean => Some(Self::Boolean),
             Type::String => Some(Self::String),
+            Type::Bytes => Some(Self::ByteArray),
             Type::Optional { inner_type } => match &**inner_type {
                 Type::UInt8 => Some(Self::Int64),
                 Type::Int8 => Some(Self::Int64),
@@ -57,6 +58,7 @@ impl FfiType {
             Self::Boolean => "Boolean".into(),
             Self::String => "String".into(),
             Self::NullableString => "String?".into(),
+            Self::ByteArray => "kotlin.ByteArray".into(),
         }
     }
 
@@ -76,6 +78,7 @@ impl FfiType {
             Self::Boolean => "bool".into(),
             // JNI uses the `jstring` type, we convert to `String` in the lift/lower functions.
             Self::String | Self::NullableString => "uniffi_jni::jstring".into(),
+            Self::ByteArray => "uniffi_jni::jbyteArray".into(),
         }
     }
 
@@ -90,6 +93,7 @@ impl FfiType {
             Self::Boolean => "false".into(),
             Self::String => "\"\"".into(),
             Self::NullableString => "null".into(),
+            Self::ByteArray => "byteArrayOf()".into(),
         }
     }
 
@@ -103,6 +107,7 @@ impl FfiType {
             Self::Float64 => "D",
             Self::Boolean => "Z",
             Self::String | Self::NullableString => "Ljava/lang/String;",
+            Self::ByteArray => "[B",
         }
     }
 
@@ -115,7 +120,7 @@ impl FfiType {
             Self::Float32 => "f",
             Self::Float64 => "d",
             Self::Boolean => "z",
-            Self::String | Self::NullableString => "l",
+            Self::String | Self::NullableString | Self::ByteArray => "l",
         }
     }
 }

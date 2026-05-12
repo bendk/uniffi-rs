@@ -226,6 +226,7 @@ impl TypeNode {
             Type::Float64 => "uniffi_jni::lower_f64".into(),
             Type::Boolean => "uniffi_jni::lower_bool".into(),
             Type::String => "uniffi_jni::lower_string".into(),
+            Type::Bytes => "uniffi_jni::lower_bytes".into(),
             Type::Optional { inner_type } => match &**inner_type {
                 Type::Boolean => "uniffi_jni::lower_option_bool".into(),
                 Type::Int8 => "uniffi_jni::lower_option_i8".into(),
@@ -262,6 +263,7 @@ impl TypeNode {
             Type::Float64 => "uniffi_jni::lift_f64".into(),
             Type::Boolean => "uniffi_jni::lift_bool".into(),
             Type::String => "uniffi_jni::lift_string".into(),
+            Type::Bytes => "uniffi_jni::lift_bytes".into(),
             Type::Optional { inner_type } => match &**inner_type {
                 Type::Boolean => "uniffi_jni::lift_option_bool".into(),
                 Type::Int8 => "uniffi_jni::lift_option_i8".into(),
@@ -334,6 +336,7 @@ impl TypeNode {
             Type::Float64 => "lowerDouble".into(),
             Type::Boolean => "lowerBoolean".into(),
             Type::String => "lowerString".into(),
+            Type::Bytes => "lowerBytes".into(),
             Type::Optional { inner_type } => match &**inner_type {
                 Type::Boolean => "lowerOptionBoolean".into(),
                 Type::Int8 => "lowerOptionByte".into(),
@@ -370,6 +373,7 @@ impl TypeNode {
             Type::Float64 => "liftDouble".into(),
             Type::Boolean => "liftBoolean".into(),
             Type::String => "liftString".into(),
+            Type::Bytes => "liftBytes".into(),
             Type::Optional { inner_type } => match &**inner_type {
                 Type::Boolean => "liftOptionBoolean".into(),
                 Type::Int8 => "liftOptionByte".into(),
