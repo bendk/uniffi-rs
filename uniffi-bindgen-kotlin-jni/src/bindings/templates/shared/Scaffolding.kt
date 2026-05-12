@@ -2,6 +2,7 @@ object Scaffolding {
     @JvmStatic external fun ffiBufferNew(): Long
     @JvmStatic external fun miniBufferNext(endPtr: Long, size: Long): Long
     @JvmStatic external fun ffiBufferFree(ptr: Long)
+    @JvmStatic external fun ffiBufferByteBuffer(ptr: Long, size: Long): java.nio.ByteBuffer
     @JvmStatic external fun readByte(ptr: Long): Byte
     @JvmStatic external fun readShort(ptr: Long): Short
     @JvmStatic external fun readInt(ptr: Long): Int

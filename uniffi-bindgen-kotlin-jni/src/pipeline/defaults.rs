@@ -48,7 +48,11 @@ fn render_type_default(ty: &Type, context: &Context) -> Result<String> {
         | Type::CallbackInterface { .. } => format!("{}()", types::type_kt(ty, context)?),
         Type::Optional { .. } => "null".to_string(),
         Type::Map { .. } => "emptyMap()".to_string(),
-        Type::Sequence { .. } => "emptyList()".to_string(),
+        Type::Sequence { inner_type } => match &**inner_type {
+            // Type::Int32 => "IntArray(0)".to_string(),
+            // Type::UInt32 => "UIntArray(0)".to_string(),
+            _ => "emptyList()".to_string(),
+        }
         Type::Custom { builtin, .. } => render_type_default(builtin, context)
             .map_err(|_| anyhow::anyhow!("Default values not supported for {ty:?}"))?,
         _ => bail!("Default values not supported for {ty:?}"),

@@ -36,6 +36,21 @@ pub extern "system" fn Java_uniffi_Scaffolding_ffiBufferFree(
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_uniffi_Scaffolding_ffiBufferByteBuffer(
+    env: *mut uniffi_jni::JNIEnv,
+    _: *mut uniffi_jni::jclass,
+    ptr: i64,
+    size: i64,
+) -> uniffi_jni::jobject {
+    // Safety:
+    // We assume the other side of the FFI sent us a valid handle
+    unsafe {
+        let ptr = ::std::ptr::with_exposed_provenance_mut(ptr as usize);
+        ((**env).v1_4.NewDirectByteBuffer)(env, ptr, size)
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_uniffi_Scaffolding_readByte(
     _: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,

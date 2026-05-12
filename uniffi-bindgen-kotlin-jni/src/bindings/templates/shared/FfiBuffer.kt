@@ -10,36 +10,40 @@ const val BASE_MINI_BUFFER_SIZE: Long = 256L
 class FfiBufferCursor(internal var ptr: Long) {
     internal var end = ptr + BASE_MINI_BUFFER_SIZE - 8
     internal var miniBufSize = BASE_MINI_BUFFER_SIZE
+    internal var byteBuf = uniffi.Scaffolding.ffiBufferByteBuffer(ptr, BASE_MINI_BUFFER_SIZE).order(java.nio.ByteOrder.nativeOrder())
+    internal var index = 0
 
     fun minibufRemaining(): Long {
-        return end - ptr
+        return end - ptr - index
     }
 
     fun advanceToNextMinibuf() {
         ptr = uniffi.Scaffolding.miniBufferNext(end, miniBufSize);
         miniBufSize *= 2L
         end = ptr + miniBufSize - 8L
+        byteBuf = uniffi.Scaffolding.ffiBufferByteBuffer(ptr, miniBufSize).order(java.nio.ByteOrder.nativeOrder())
+        index = 0
     }
 
     // Prepare for a read or write
     //
     // This ensures `this.ptr` is properly aligned and there's enough space left in the current mini
     // buffer.
-    fun prepare(align: Long, size: Long) {
+    fun prepare(align: Int, size: Int) {
         // Offset needed to properly align the pointer
-        val alignOffset = (-ptr).mod(align)
-        if (ptr + alignOffset + size > end) {
+        val alignOffset = (-index).mod(align)
+        if (ptr + index + alignOffset + size > end) {
             advanceToNextMinibuf()
         } else {
-            ptr += alignOffset
+            index += alignOffset
         }
     }
 }
 
 fun readByte(cursor: FfiBufferCursor): Byte {
     cursor.prepare(1, 1)
-    val value = Scaffolding.readByte(cursor.ptr)
-    cursor.ptr += 1
+    val value = cursor.byteBuf.get(cursor.index)
+    cursor.index += 1
     return value
 }
 
@@ -49,8 +53,8 @@ fun readUByte(cursor: FfiBufferCursor): UByte {
 
 fun readShort(cursor: FfiBufferCursor): Short {
     cursor.prepare(2, 2)
-    val value = Scaffolding.readShort(cursor.ptr)
-    cursor.ptr += 2
+    val value = cursor.byteBuf.getShort(cursor.index)
+    cursor.index += 2
     return value
 }
 
@@ -60,8 +64,8 @@ fun readUShort(cursor: FfiBufferCursor): UShort {
 
 fun readInt(cursor: FfiBufferCursor): Int {
     cursor.prepare(4, 4)
-    val value = Scaffolding.readInt(cursor.ptr)
-    cursor.ptr += 4
+    val value = cursor.byteBuf.getInt(cursor.index)
+    cursor.index += 4
     return value
 }
 
@@ -71,8 +75,8 @@ fun readUInt(cursor: FfiBufferCursor): UInt {
 
 fun readLong(cursor: FfiBufferCursor): Long {
     cursor.prepare(8, 8)
-    val value = Scaffolding.readLong(cursor.ptr)
-    cursor.ptr += 8
+    val value = cursor.byteBuf.getLong(cursor.index)
+    cursor.index += 8
     return value
 }
 
@@ -82,15 +86,15 @@ fun readULong(cursor: FfiBufferCursor): ULong {
 
 fun readFloat(cursor: FfiBufferCursor): Float {
     cursor.prepare(4, 4)
-    val value = Scaffolding.readFloat(cursor.ptr)
-    cursor.ptr += 4
+    val value = cursor.byteBuf.getFloat(cursor.index)
+    cursor.index += 4
     return value
 }
 
 fun readDouble(cursor: FfiBufferCursor): Double {
     cursor.prepare(8, 8)
-    val value = Scaffolding.readDouble(cursor.ptr)
-    cursor.ptr += 8
+    val value = cursor.byteBuf.getDouble(cursor.index)
+    cursor.index += 8
     return value
 }
 
@@ -101,15 +105,15 @@ fun readBool(cursor: FfiBufferCursor): Boolean {
 fun readString(cursor: FfiBufferCursor): String {
     // Strings are stored as 3 64-bit values
     cursor.prepare(8, 24)
-    val value = Scaffolding.readString(cursor.ptr)
-    cursor.ptr += 24
+    val value = Scaffolding.readString(cursor.ptr + cursor.index)
+    cursor.index += 24
     return value
 }
 
 fun writeByte(cursor: FfiBufferCursor, value: Byte) {
     cursor.prepare(1, 1)
-    Scaffolding.writeByte(cursor.ptr, value)
-    cursor.ptr += 1
+    cursor.byteBuf.put(cursor.index, value)
+    cursor.index += 1
 }
 
 fun writeUByte(cursor: FfiBufferCursor, value: UByte) {
@@ -118,8 +122,8 @@ fun writeUByte(cursor: FfiBufferCursor, value: UByte) {
 
 fun writeShort(cursor: FfiBufferCursor, value: Short) {
     cursor.prepare(2, 2)
-    Scaffolding.writeShort(cursor.ptr, value)
-    cursor.ptr += 2
+    cursor.byteBuf.putShort(cursor.index, value)
+    cursor.index += 2
 }
 
 fun writeUShort(cursor: FfiBufferCursor, value: UShort) {
@@ -128,8 +132,8 @@ fun writeUShort(cursor: FfiBufferCursor, value: UShort) {
 
 fun writeInt(cursor: FfiBufferCursor, value: Int) {
     cursor.prepare(4, 4)
-    Scaffolding.writeInt(cursor.ptr, value)
-    cursor.ptr += 4
+    cursor.byteBuf.putInt(cursor.index, value)
+    cursor.index += 4
 }
 
 fun writeUInt(cursor: FfiBufferCursor, value: UInt) {
@@ -138,8 +142,8 @@ fun writeUInt(cursor: FfiBufferCursor, value: UInt) {
 
 fun writeLong(cursor: FfiBufferCursor, value: Long) {
     cursor.prepare(8, 8)
-    Scaffolding.writeLong(cursor.ptr, value)
-    cursor.ptr += 8
+    cursor.byteBuf.putLong(cursor.index, value)
+    cursor.index += 8
 }
 
 fun writeULong(cursor: FfiBufferCursor, value: ULong) {
@@ -148,14 +152,14 @@ fun writeULong(cursor: FfiBufferCursor, value: ULong) {
 
 fun writeFloat(cursor: FfiBufferCursor, value: Float) {
     cursor.prepare(4, 4)
-    Scaffolding.writeFloat(cursor.ptr, value)
-    cursor.ptr += 4
+    cursor.byteBuf.putFloat(cursor.index, value)
+    cursor.index += 4
 }
 
 fun writeDouble(cursor: FfiBufferCursor, value: Double) {
     cursor.prepare(8, 8)
-    Scaffolding.writeDouble(cursor.ptr, value)
-    cursor.ptr += 8
+    cursor.byteBuf.putDouble(cursor.index, value)
+    cursor.index += 8
 }
 
 fun writeBool(cursor: FfiBufferCursor, value: Boolean) {
@@ -165,6 +169,6 @@ fun writeBool(cursor: FfiBufferCursor, value: Boolean) {
 fun writeString(cursor: FfiBufferCursor, value: String) {
     // Strings are stored as 3 64-bit values
     cursor.prepare(8, 24)
-    Scaffolding.writeString(cursor.ptr, value)
-    cursor.ptr += 24
+    Scaffolding.writeString(cursor.ptr + cursor.index, value)
+    cursor.index += 24
 }
