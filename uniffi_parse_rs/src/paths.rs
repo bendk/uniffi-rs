@@ -137,7 +137,9 @@ impl<'ir> RPath<'ir> {
                     BuiltinItem::HashMap => path.push_str("HashMap"),
                     BuiltinItem::Option => path.push_str("Option"),
                     BuiltinItem::Result => path.push_str("Result"),
-                    BuiltinItem::UniffiMacro(name) => path.push_str(name),
+                    BuiltinItem::UniffiMacro(name) | BuiltinItem::UniffiDerive(name) => {
+                        path.push_str(name)
+                    }
                 }
             } else {
                 path.push_str(&item.name());
@@ -223,7 +225,7 @@ impl<'ir> RPath<'ir> {
 
         match ir.crate_roots.get(first_ident) {
             Some(crate_root) => {
-                let mut rpath = RPath::new(crate_root);
+                let mut rpath = RPath::new(crate_root.module_item());
                 trace!("  found crate root (path: {})", rpath.path_string());
                 for (i, seg) in path.segments.iter().enumerate().skip(1) {
                     trace!(
@@ -601,8 +603,11 @@ impl Namespace {
                 | Item::CustomType(_)
                 | Item::Udl(_)
                 | Item::Type(_)
-                | Item::Builtin(_)
                 | Item::UseRemoteType(_) => true,
+                Item::Builtin(builtin) => match builtin {
+                    BuiltinItem::UniffiMacro(_) | BuiltinItem::UniffiDerive(_) => false,
+                    _ => true,
+                },
                 _ => false,
             },
             Self::Value => match item {
@@ -610,8 +615,11 @@ impl Namespace {
                 _ => false,
             },
             Self::Macro => match item {
-                Item::Builtin(BuiltinItem::UniffiMacro(_)) => true,
-                _ => false,
+                Item::Builtin(builtin) => match builtin {
+                    BuiltinItem::UniffiMacro(_) | BuiltinItem::UniffiDerive(_) => true,
+                    _ => false,
+                },
+                _ => true,
             },
             Self::NonUniffiType => match item {
                 Item::NonUniffi(_, _) => true,
@@ -713,9 +721,15 @@ fn get_builtin_item(path: &Path) -> Option<&'static Item> {
         "uniffi::custom_newtype" => {
             Some(&Item::Builtin(BuiltinItem::UniffiMacro("custom_newtype")))
         }
+        "uniffi::export" => Some(&Item::Builtin(BuiltinItem::UniffiMacro("export"))),
+        "uniffi::remote" => Some(&Item::Builtin(BuiltinItem::UniffiMacro("remote"))),
         "uniffi::use_remote_type" => {
             Some(&Item::Builtin(BuiltinItem::UniffiMacro("use_remote_type")))
         }
+        "uniffi::Record" => Some(&Item::Builtin(BuiltinItem::UniffiDerive("Record"))),
+        "uniffi::Enum" => Some(&Item::Builtin(BuiltinItem::UniffiDerive("Enum"))),
+        "uniffi::Error" => Some(&Item::Builtin(BuiltinItem::UniffiDerive("Error"))),
+        "uniffi::Object" => Some(&Item::Builtin(BuiltinItem::UniffiDerive("Object"))),
         _ => None,
     }
 }
@@ -737,6 +751,7 @@ pub mod tests {
         let rpath = path_for_module(ir, module_path);
         rpath
             .resolve(ir, cache, &syn::parse_str(path).unwrap(), Namespace::Type)
+            .inspect(|path| println!("run_resolve_item path: {path:?}"))
             .map(|path| format!("{path}"))
             .map_err(|e| e.kind)
     }
@@ -760,15 +775,12 @@ pub mod tests {
     pub fn path_for_module<'ir>(ir: &'ir Ir, module_path: &str) -> RPath<'ir> {
         let mut parts = module_path.split("::");
         let crate_name = parts.next().unwrap();
-        let item = ir
+        let crate_root = ir
             .crate_roots
             .get(&format_ident!("{crate_name}"))
             .unwrap_or_else(|| panic!("crate root not found: {crate_name}"));
-        let mut module = match item {
-            Item::Module(module) => module,
-            _ => panic!("Crate root not module"),
-        };
-        let mut path = RPath::new(item);
+        let mut path = RPath::new(crate_root.module_item());
+        let mut module = crate_root.module();
         for module_name in parts {
             let child_item = module
                 .items
@@ -995,7 +1007,7 @@ pub mod tests {
 
         assert_eq!(
             run_resolve_item(&ir, &mut cache, "name_conflicts", "CustomTypeConflict"),
-            Err(ErrorKind::NameConflict),
+            Ok("name_conflicts::CustomTypeConflict".into()),
         );
 
         // Check resolving paths to functions, which use the value namespace.
