@@ -29,6 +29,8 @@ pub enum Item {
     IncludeScaffolding(LitStr),
     // Unresolved syn::Item, we'll process this in [crate::Ir::resolve_items]
     Unresolved(syn::Item),
+    // Unresolved trait impl.  We'll process this [module::create_metadata].
+    UnresolvedImpl(syn::ItemImpl),
     // syn::Item that's doesn't have a UniFFI attribute.
     // These still can be used as custom types though.
     NonUniffi(Visibility, Ident),
@@ -67,6 +69,8 @@ pub enum BuiltinItem {
     Result,
     Arc,
     Box,
+    From,
+    UnexpectedUniFFICallbackError,
     UniffiMacro(&'static str),
     UniffiDerive(&'static str),
 }
@@ -134,9 +138,10 @@ impl Item {
                 Visibility::Public
             }
             // "visibility" doesn't mean anything for these items, let's return `Private`
-            Self::Unresolved(_) | Self::Impl(_) | Self::IncludeScaffolding(_) => {
-                Visibility::Private
-            }
+            Self::Unresolved(_)
+            | Self::UnresolvedImpl(_)
+            | Self::Impl(_)
+            | Self::IncludeScaffolding(_) => Visibility::Private,
         }
     }
 
@@ -206,6 +211,7 @@ impl fmt::Debug for Item {
                 .finish(),
             Self::Udl(ty) => f.debug_tuple("Udl").field(ty).finish(),
             Self::Unresolved(_) => f.debug_tuple("Unresolved").finish(),
+            Self::UnresolvedImpl(_) => f.debug_tuple("UnresolvedImpl").finish(),
         }
     }
 }
