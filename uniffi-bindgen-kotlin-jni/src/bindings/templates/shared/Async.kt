@@ -11,7 +11,7 @@ fun uniffiContinuationResume(continuation: kotlin.coroutines.Continuation<Int>) 
 suspend fun {{ rust_result.async_await_future_fn() }}(
     rustFuture: Long,
     {%- if rust_result.return_strategy().is_ffi_buffer() %}
-    uniffiBuffer: Long,
+    uniffiBuffer: java.nio.ByteBuffer,
     {%- endif %}
 ){%- if let Some(return_type) = rust_result.return_type %} : {{ return_type.type_kt }}{% endif %}
 {

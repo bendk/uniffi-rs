@@ -98,7 +98,11 @@ impl {{ trait_name }} for {{ cbi.impl_struct_rs() }} {
                 },
                 {%- if callable.uses_buffer() %}
                 uniffi_jni::jvalue {
-                    j: uniffi_buf.as_ptr().expose_provenance() as i64,
+                    l: ((**uniffi_env).v1_4.NewDirectByteBuffer)(
+                        uniffi_env,
+                        uniffi_buf.as_ptr().cast(),
+                        uniffi::BASE_MINI_BUFFER_SIZE as i64,
+                    )
                 },
                 {%- endif %}
                 {%- if meth.passes_return_value_pointer() %}

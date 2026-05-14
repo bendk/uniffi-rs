@@ -875,6 +875,7 @@ impl CallableResult {
                 Some(LowerableType::Deconstructable(ffi_types)) => {
                     // Only choose `Reconstruct` if the number of FFI types is large.
                     // See `DESIGN.md` for the reasoning
+                    // FIXME, don't apply this to callbacks
                     if ffi_types.len() >= 5 {
                         ReturnStrategy::Reconstruct(type_node, ffi_types)
                     } else {

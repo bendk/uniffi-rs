@@ -10,7 +10,7 @@ private val {{ cbi.handle_map_kt() }} = HandleMap<{{ type_name }}>();
 fun {{ meth.dispatch_fn_kt }}(
     uniffiHandle: Long,
     {%- if callable.uses_buffer() %}
-    uniffiBuffer: Long,
+    uniffiBuffer: java.nio.ByteBuffer,
     {%- endif %}
     {%- if callable.return_strategy().is_reconstruct() || callable.throws_type().is_some() %}
     uniffiReturnPointer: Long,
@@ -93,7 +93,7 @@ fun {{ meth.dispatch_fn_kt }}(
     uniffiHandle: Long,
     uniffiKotlinFutureHandle: Long,
     {%- if callable.uses_buffer() %}
-    uniffiBuffer: Long,
+    uniffiBuffer: java.nio.ByteBuffer,
     {%- endif %}
     {%- for ffi_arg in callable.ffi_arguments() %}
     {{ ffi_arg.name_kt() }}: {{ ffi_arg.ty.type_kt() }},

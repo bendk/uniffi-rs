@@ -53,7 +53,7 @@ use std::{
 use crate::Result;
 
 /// Size of the initial buffer in FFI buffer list (in bytes).
-const BASE_MINI_BUFFER_SIZE: usize = 256;
+pub const BASE_MINI_BUFFER_SIZE: usize = 256;
 
 /// FFI buffer wrapper
 #[derive(Debug)]

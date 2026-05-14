@@ -97,7 +97,7 @@ fn jni_signature(callable: &Callable) -> Result<String> {
     let mut args = String::from("J");
     if callable.uses_buffer() {
         // Buffer handle
-        args.push('J');
+        args.push_str("Ljava/nio/ByteBuffer;");
     }
     if callable.is_async {
         // Future handle

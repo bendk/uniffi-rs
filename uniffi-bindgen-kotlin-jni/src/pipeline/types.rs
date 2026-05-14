@@ -470,7 +470,7 @@ impl TypeNode {
 
     pub fn lift_fn_jni_signature(&self) -> String {
         let args = match &self.lowerable {
-            None => "J".to_string(),
+            None => "Ljava/nio/ByteBuffer;".to_string(),
             Some(LowerableType::Deconstructable(ffi_types)) => ffi_types
                 .iter()
                 .map(|ffi_type| ffi_type.jni_signature())

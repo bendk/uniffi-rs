@@ -6,7 +6,7 @@
 pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jni_method_name }}(
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
-    {%- if callable.uses_buffer() %}uniffi_buf_handle: i64,{% endif %}
+    {%- if callable.uses_buffer() %}uniffi_byte_buf: uniffi_jni::jobject,{% endif %}
     {%- for ffi_arg in callable.ffi_arguments_including_receiver() %}
     {{ ffi_arg.name_rs() }}: {{ ffi_arg.ty.type_rs() }},
     {%- endfor %}
@@ -25,8 +25,9 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
     unsafe {
         uniffi_jni::rust_call(uniffi_env, |uniffi_env| {
             {%- if callable.uses_buffer() %}
+
             let mut uniffi_buf = uniffi::FfiBuffer::from_ptr(
-                ::std::ptr::with_exposed_provenance_mut(uniffi_buf_handle as usize)
+                ((**uniffi_env).v1_4.GetDirectBufferAddress)(uniffi_env, uniffi_byte_buf).cast()
             );
             {% endif %}
             {% filter indent(12) %}{% include "lift_args.rs" %}{% endfilter %}
@@ -131,7 +132,7 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
 pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jni_method_name }}(
     uniffi_env: *mut uniffi_jni::JNIEnv,
     _: *mut uniffi_jni::jclass,
-    {%- if callable.uses_buffer() %}uniffi_buf_handle: i64,{% endif %}
+    {%- if callable.uses_buffer() %}uniffi_byte_buf: uniffi_jni::jobject,{% endif %}
     {%- for ffi_arg in callable.ffi_arguments_including_receiver() %}
     {{ ffi_arg.name_rs() }}: {{ ffi_arg.ty.type_rs() }},
     {%- endfor %}
@@ -145,7 +146,7 @@ pub unsafe extern "system" fn Java_uniffi_Scaffolding_{{ scaffolding_function.jn
         uniffi_jni::rust_call(uniffi_env, |uniffi_env| {
             {%- if callable.uses_buffer() %}
             let mut uniffi_buf = uniffi::FfiBuffer::from_ptr(
-                ::std::ptr::with_exposed_provenance_mut(uniffi_buf_handle as usize)
+                ((**uniffi_env).v1_4.GetDirectBufferAddress)(uniffi_env, uniffi_byte_buf).cast()
             );
             {% endif %}
             {% filter indent(16) %}{% include "lift_args.rs" %}{% endfilter %}

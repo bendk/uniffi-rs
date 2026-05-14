@@ -1,28 +1,28 @@
 object Scaffolding {
-    @JvmStatic external fun ffiBufferNew(): Long
-    @JvmStatic external fun miniBufferNext(endPtr: Long, size: Long): Long
-    @JvmStatic external fun ffiBufferFree(ptr: Long)
-    @JvmStatic external fun ffiBufferByteBuffer(ptr: Long, size: Long): java.nio.ByteBuffer
-    @JvmStatic external fun readByte(ptr: Long): Byte
-    @JvmStatic external fun readShort(ptr: Long): Short
-    @JvmStatic external fun readInt(ptr: Long): Int
-    @JvmStatic external fun readLong(ptr: Long): Long
-    @JvmStatic external fun readFloat(ptr: Long): Float
-    @JvmStatic external fun readDouble(ptr: Long): Double
-    @JvmStatic external fun readString(ptr: Long): String
-    @JvmStatic external fun writeByte(ptr: Long, value: Byte)
-    @JvmStatic external fun writeShort(ptr: Long, value: Short)
-    @JvmStatic external fun writeInt(ptr: Long, value: Int)
-    @JvmStatic external fun writeLong(ptr: Long, value: Long)
-    @JvmStatic external fun writeFloat(ptr: Long, value: Float)
-    @JvmStatic external fun writeDouble(ptr: Long, value: Double)
-    @JvmStatic external fun writeString(ptr: Long, value: String)
+    @JvmStatic external fun ffiBufferNew(): java.nio.ByteBuffer
+    @JvmStatic external fun miniBufferNext(ptr: java.nio.ByteBuffer, size: Long): java.nio.ByteBuffer
+    @JvmStatic external fun ffiBufferFree(ptr: java.nio.ByteBuffer)
+    //@JvmStatic external fun ffiBufferByteBuffer(ptr: Long, size: Long): java.nio.ByteBuffer
+    // @JvmStatic external fun readByte(ptr: Long): Byte
+    // @JvmStatic external fun readShort(ptr: Long): Short
+    // @JvmStatic external fun readInt(ptr: Long): Int
+    // @JvmStatic external fun readLong(ptr: Long): Long
+    // @JvmStatic external fun readFloat(ptr: Long): Float
+    // @JvmStatic external fun readDouble(ptr: Long): Double
+    @JvmStatic external fun readString(data: Long, length: Long, capacity: Long): String
+    // @JvmStatic external fun writeByte(ptr: Long, value: Byte)
+    // @JvmStatic external fun writeShort(ptr: Long, value: Short)
+    // @JvmStatic external fun writeInt(ptr: Long, value: Int)
+    // @JvmStatic external fun writeLong(ptr: Long, value: Long)
+    // @JvmStatic external fun writeFloat(ptr: Long, value: Float)
+    // @JvmStatic external fun writeDouble(ptr: Long, value: Double)
+    @JvmStatic external fun writeString(ptr: java.nio.ByteBuffer, index: Int, value: String)
 
     {%- for package in root.packages %}
     {%- for scaffolding_function in package.scaffolding_functions %}
     @JvmStatic external fun {{ scaffolding_function.jni_method_name }}(
         {%- if scaffolding_function.callable.uses_buffer() %}
-        uniffiBuffer: Long,
+        uniffiBuffer: java.nio.ByteBuffer,
         {%- endif %}
         {%- for ffi_arg in scaffolding_function.callable.ffi_arguments_including_receiver() %}
         {{ ffi_arg.name_kt() }}: {{ ffi_arg.ty.type_kt() }},
@@ -55,7 +55,7 @@ object Scaffolding {
         continuation: kotlin.coroutines.Continuation<Int>,
         {%- match rust_result.return_strategy() %}
         {%- when ReturnStrategy::FfiBuffer(_) %}
-        uniffiBuffer: Long,
+        uniffiBuffer: java.nio.ByteBuffer,
         {%- when ReturnStrategy::Primitive(_, _) | ReturnStrategy::Reconstruct(_, _) %}
         completion: {{ rust_result.async_complete_class() }},
         {%- when ReturnStrategy::Void %}
@@ -70,7 +70,7 @@ object Scaffolding {
             kotlinFuture: Long,
             {%- match callback_result.return_strategy() %}
             {%- when ReturnStrategy::FfiBuffer(_) %}
-            buffer: Long,
+            buffer: java.nio.ByteBuffer,
             {%- when ReturnStrategy::Primitive(_, ffi_type) %}
             uniffiReturn: {{ ffi_type.type_kt() }},
             {%- when ReturnStrategy::Reconstruct(_, ffi_types) %}
@@ -91,7 +91,7 @@ object Scaffolding {
         errorV{{ loop.index0 }}: {{ ffi_type.type_kt() }},
         {%- endfor %}
         {%- when None %}
-        buffer: Long,
+        buffer: java.nio.ByteBuffer,
         {%- endmatch %}
     )
     {%- endif %}
@@ -128,7 +128,7 @@ object Scaffolding {
     {%- when None %}
     @JvmStatic external fun {{ callback_result.set_callback_err_fn_kt() }}(
         resultPointer: Long,
-        uniffiBuffer: Long,
+        uniffiBuffer: java.nio.ByteBuffer,
     )
     {%- endmatch %}
     {%- endif %}

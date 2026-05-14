@@ -7,21 +7,20 @@ const val BASE_MINI_BUFFER_SIZE: Long = 256L
  *
  * This tracks the current position in the buffer.
  */
-class FfiBufferCursor(internal var ptr: Long) {
-    internal var end = ptr + BASE_MINI_BUFFER_SIZE - 8
+class FfiBufferCursor(byteBuffer: java.nio.ByteBuffer) {
+    internal var byteBuf = byteBuffer.order(java.nio.ByteOrder.nativeOrder())
     internal var miniBufSize = BASE_MINI_BUFFER_SIZE
-    internal var byteBuf = uniffi.Scaffolding.ffiBufferByteBuffer(ptr, BASE_MINI_BUFFER_SIZE).order(java.nio.ByteOrder.nativeOrder())
     internal var index = 0
+    internal var end = BASE_MINI_BUFFER_SIZE - 8
 
     fun minibufRemaining(): Long {
-        return end - ptr - index
+        return end - index
     }
 
     fun advanceToNextMinibuf() {
-        ptr = uniffi.Scaffolding.miniBufferNext(end, miniBufSize);
+        byteBuf = uniffi.Scaffolding.miniBufferNext(byteBuf, miniBufSize).order(java.nio.ByteOrder.nativeOrder())
         miniBufSize *= 2L
-        end = ptr + miniBufSize - 8L
-        byteBuf = uniffi.Scaffolding.ffiBufferByteBuffer(ptr, miniBufSize).order(java.nio.ByteOrder.nativeOrder())
+        end = miniBufSize - 8L
         index = 0
     }
 
@@ -32,7 +31,7 @@ class FfiBufferCursor(internal var ptr: Long) {
     fun prepare(align: Int, size: Int) {
         // Offset needed to properly align the pointer
         val alignOffset = (-index).mod(align)
-        if (ptr + index + alignOffset + size > end) {
+        if (index + size > end) {
             advanceToNextMinibuf()
         } else {
             index += alignOffset
@@ -105,7 +104,10 @@ fun readBool(cursor: FfiBufferCursor): Boolean {
 fun readString(cursor: FfiBufferCursor): String {
     // Strings are stored as 3 64-bit values
     cursor.prepare(8, 24)
-    val value = Scaffolding.readString(cursor.ptr + cursor.index)
+    val data = cursor.byteBuf.getLong(cursor.index)
+    val length = cursor.byteBuf.getLong(cursor.index + 8)
+    val capacity = cursor.byteBuf.getLong(cursor.index + 16)
+    val value = Scaffolding.readString(data, length, capacity)
     cursor.index += 24
     return value
 }
@@ -169,6 +171,6 @@ fun writeBool(cursor: FfiBufferCursor, value: Boolean) {
 fun writeString(cursor: FfiBufferCursor, value: String) {
     // Strings are stored as 3 64-bit values
     cursor.prepare(8, 24)
-    Scaffolding.writeString(cursor.ptr + cursor.index, value)
+    Scaffolding.writeString(cursor.byteBuf, cursor.index, value)
     cursor.index += 24
 }

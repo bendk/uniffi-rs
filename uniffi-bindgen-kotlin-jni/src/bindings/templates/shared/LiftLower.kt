@@ -96,7 +96,7 @@ fun lowerOptionDouble(v: Double?): Long {
 {%- for type_node in root.rust_return_and_throws_types() %}
 {%- if type_node.uses_buffer() %}
 /// Construct a new `{{ type_node.type_kt }}` instance
-fun {{ type_node.lift_fn_kt() }}(buffer: Long) : {{ type_node.type_kt }} {
+fun {{ type_node.lift_fn_kt() }}(buffer: java.nio.ByteBuffer) : {{ type_node.type_kt }} {
     return {{ type_node.read_fn_kt() }}(uniffi.FfiBufferCursor(buffer))
 }
 {%- endif %}

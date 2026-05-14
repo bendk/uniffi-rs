@@ -35,7 +35,11 @@ unsafe fn {{ type_node.throw_error_fn_rs() }}(
             {%- match type_node.lowerable %}
             {%- when None %}
             uniffi_jni::jvalue {
-                j: uniffi_buf.as_ptr().expose_provenance() as i64,
+                l: ((**env).v1_4.NewDirectByteBuffer)(
+                    env,
+                    uniffi_buf.as_ptr().cast(),
+                    uniffi::BASE_MINI_BUFFER_SIZE as i64,
+                ),
             },
             {%- when Some(LowerableType::Deconstructable(ffi_types)) %}
             {%- for ffi_type in ffi_types %}
