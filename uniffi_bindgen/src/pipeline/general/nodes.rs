@@ -213,6 +213,7 @@ pub struct Record {
     pub fields_kind: FieldsKind,
     #[map_node(context.self_type()?)]
     pub self_type: TypeNode,
+    pub module_path: String,
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,
@@ -263,6 +264,7 @@ pub struct Enum {
     pub discr_type: TypeNode,
     #[map_node(enums::map_variants(&self.discr_type, self.variants, context)?)]
     pub variants: Vec<Variant>,
+    pub module_path: String,
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,
@@ -304,6 +306,7 @@ pub struct Interface {
     pub ffi_func_clone: RustFfiFunctionName,
     #[map_node(objects::ffi_free_name(&self.name, context)?)]
     pub ffi_func_free: RustFfiFunctionName,
+    pub module_path: String,
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,
@@ -327,6 +330,7 @@ pub struct CallbackInterface {
     pub vtable: VTable,
     #[map_node(context.self_type()?)]
     pub self_type: TypeNode,
+    pub module_path: String,
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,
@@ -372,6 +376,7 @@ pub struct ObjectTraitImpl {
 pub struct CustomType {
     #[map_node(context.self_type()?)]
     pub self_type: TypeNode,
+    pub module_path: String,
     pub orig_name: String,
     #[map_node(rename::type_(&context.namespace_name()?, self.name, context)?)]
     pub name: String,

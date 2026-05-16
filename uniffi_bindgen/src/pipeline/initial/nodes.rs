@@ -156,6 +156,7 @@ pub struct Record {
     pub constructors: Vec<Constructor>,
     pub methods: Vec<Method>,
     pub uniffi_traits: Vec<UniffiTrait>,
+    pub module_path: String,
     pub name: String,
     pub orig_name: String,
     pub fields: Vec<Field>,
@@ -180,6 +181,7 @@ pub struct Enum {
     pub constructors: Vec<Constructor>,
     pub methods: Vec<Method>,
     pub uniffi_traits: Vec<UniffiTrait>,
+    pub module_path: String,
     pub name: String,
     pub orig_name: String,
     pub shape: EnumShape,
@@ -207,6 +209,7 @@ pub struct Interface {
     pub methods: Vec<Method>,
     pub uniffi_traits: Vec<UniffiTrait>,
     pub trait_impls: Vec<ObjectTraitImpl>,
+    pub module_path: String,
     pub name: String,
     pub orig_name: String,
     pub docstring: Option<String>,
@@ -218,6 +221,7 @@ pub struct Interface {
 #[map_node(types::map_callback_interface)]
 pub struct CallbackInterface {
     pub methods: Vec<Method>,
+    pub module_path: String,
     pub name: String,
     pub orig_name: String,
     pub docstring: Option<String>,
@@ -245,6 +249,7 @@ pub struct ObjectTraitImpl {
 #[map_node(from(uniffi_meta::CustomTypeMetadata))]
 #[map_node(types::map_custom_type)]
 pub struct CustomType {
+    pub module_path: String,
     pub name: String,
     pub orig_name: String,
     pub builtin: Type,
