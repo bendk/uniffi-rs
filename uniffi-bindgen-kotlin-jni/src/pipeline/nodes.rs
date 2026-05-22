@@ -34,6 +34,7 @@ pub struct Package {
 pub enum TypeDefinition {
     Record(Record),
     Enum(Enum),
+    Optional(OptionalType),
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -140,6 +141,13 @@ pub struct Argument {
     pub ty: TypeNode,
     pub optional: bool,
     pub ffi_args: Vec<FfiArgument>,
+}
+
+#[derive(Debug, Clone, Node, MapNode)]
+#[map_node(from(general::OptionalType))]
+pub struct OptionalType {
+    pub inner: TypeNode,
+    pub self_type: TypeNode,
 }
 
 /// Wrap `Type` so that we can add extra fields that are set for all variants.
