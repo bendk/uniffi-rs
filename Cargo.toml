@@ -49,8 +49,6 @@ members = [
 
   "fixtures/benchmarks",
   "fixtures/coverall",
-  "fixtures/callbacks",
-  "fixtures/error-types",
 
   "fixtures/ext-types/custom-types",
   "fixtures/ext-types/http-headermap",
