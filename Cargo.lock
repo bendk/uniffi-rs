@@ -1900,6 +1900,7 @@ dependencies = [
  "thiserror",
  "uniffi",
  "uniffi-bindgen-tests-external-types-source",
+ "uniffi-bindgen-tests-mid-types",
  "url",
 ]
 

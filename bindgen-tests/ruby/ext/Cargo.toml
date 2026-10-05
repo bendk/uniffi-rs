@@ -5,5 +5,5 @@ edition = "2021"
 
 [dependencies]
 uniffi = { path = "../../../uniffi" }
-uniffi-bindgen-tests-mid-types = { path = "../mid-types" }
+uniffi-bindgen-tests-mid-types = { path = "../../mid-types" }
 uniffi-bindgen-tests-ruby-ext-source = { path = "../ext-source" }
