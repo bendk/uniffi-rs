@@ -70,7 +70,7 @@ impl CompileEnv {
     }
 
     #[allow(clippy::match_like_matches_macro)]
-    fn check(&self, meta: &Meta) -> syn::Result<bool> {
+    pub fn check(&self, meta: &Meta) -> syn::Result<bool> {
         let mut matched;
         let path = meta.path();
         if path.is_ident("all") {
