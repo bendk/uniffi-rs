@@ -598,8 +598,8 @@ impl Visibility {
     }
 }
 
-impl From<syn::Visibility> for Visibility {
-    fn from(vis: syn::Visibility) -> Self {
+impl From<&syn::Visibility> for Visibility {
+    fn from(vis: &syn::Visibility) -> Self {
         match vis {
             syn::Visibility::Public(_) => Self::Public,
             _ => Self::Private,
