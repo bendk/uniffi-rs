@@ -53,9 +53,7 @@ pub fn resolve_cfg_select_macros(ir: &mut Ir) -> Result<()> {
                     expanded_macro = true;
                     Ok(VisitUnresolvedItem::Remove)
                 }
-                _ => {
-                    Ok(VisitUnresolvedItem::Keep)
-                }
+                _ => Ok(VisitUnresolvedItem::Keep),
             }
         })?;
         changes.apply(ir)?;

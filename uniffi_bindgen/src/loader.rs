@@ -82,14 +82,12 @@ impl BindgenLoader {
                 .context("Failed to find Rust crates, was the `cargo_metadata` feature enabled?")?;
 
             for source in source_crates {
-                let m = parser.add_crate_root(&source.name, &source.src_path, source.features)?;
-                if let Some(udl_name) = &m.udl_name {
-                    let udl_content = self.bindgen_paths.get_udl(&source.name, udl_name)?;
-                    let group = uniffi_udl::parse_udl(&udl_content, &source.name)?;
-                    parser.add_udl_metadata(&source.name, group.items)?;
-                }
+                parser.add_crate_root(&source.name, &source.src_path, source.features)?;
             }
-            parser.into_uniffi_meta()
+            parser.into_uniffi_meta(|crate_name, udl_name| {
+                let udl_content = self.bindgen_paths.get_udl(crate_name, udl_name)?;
+                uniffi_udl::parse_udl(&udl_content, crate_name)
+            })
         } else if source_path == "src" {
             bail!("Specify crate sources using `src:[crate-name]`")
         } else if self.is_udl(source_path) {

@@ -83,27 +83,32 @@ impl Parser {
         name: &str,
         path: &Utf8Path,
         features: Vec<String>,
-    ) -> anyhow::Result<&Module> {
+    ) -> anyhow::Result<()> {
         let compile_env = CompileEnv::new(self.target.clone(), features);
         self.ir
             .add_crate_root(name, path, compile_env)
             .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    pub fn add_udl_metadata(
-        &mut self,
-        crate_name: &str,
-        items: impl IntoIterator<Item = uniffi_meta::Metadata>,
-    ) -> anyhow::Result<()> {
-        self.ir
-            .add_udl_metadata(crate_name, items)
-            .map_err(|e| anyhow::anyhow!("{e}"))
-    }
-
-    pub fn into_uniffi_meta(mut self) -> anyhow::Result<MetadataGroupMap> {
+    /// Consume the parser into a [uniffi_meta::MetadataGroupMap]
+    ///
+    /// `udl_loader` inputs (crate_name, udl_namespace)
+    /// and returns metadata loaded from the UDL file for that crate.
+    pub fn into_uniffi_meta<F>(mut self, mut udl_loader: F) -> anyhow::Result<MetadataGroupMap>
+    where
+        F: FnMut(&str, &str) -> anyhow::Result<MetadataGroup>,
+    {
         self.ir
             .resolve_items()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for crate_root in self.ir.crate_roots.values_mut() {
+            let udl_name = crate_root.udl_name().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let module = crate_root.module_mut();
+            if let Some(udl_name) = udl_name {
+                let metadata = udl_loader(&module.ident.to_string(), &udl_name)?;
+                module.add_udl_metadata(metadata.items);
+            }
+        }
         self.ir
             .into_metadata_group_map()
             .map_err(|e| anyhow::anyhow!("{e}"))
