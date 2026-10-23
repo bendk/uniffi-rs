@@ -7,7 +7,7 @@
 
 use anyhow::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
-use cargo_metadata::Package;
+use cargo_metadata::{Dependency, Package};
 use std::collections::{HashMap, HashSet};
 
 use crate::{bindgen_paths::SourceCrate, BindgenPathsLayer, CargoMetadataOptions};
@@ -119,12 +119,14 @@ impl BindgenPathsLayer for CrateConfigSupplier {
                 continue;
             };
             if should_parse_package(package) {
-                if let Some(src_path) = find_src_lib(package) {
-                    found.push((package.name.to_string(), src_path.clone()));
+                if let Some((crate_name, src_path)) = find_src_lib(package) {
+                    found.push((package.name.to_string(), crate_name, src_path.clone()));
                 }
             }
 
-            for dep in package.dependencies.iter() {
+            let dependencies = dependencies_to_parse(package);
+
+            for dep in dependencies.iter() {
                 feature_map
                     .entry(dep.name.as_str())
                     .or_default()
@@ -161,7 +163,7 @@ impl BindgenPathsLayer for CrateConfigSupplier {
                 }
             }
 
-            for dep in package.dependencies.iter() {
+            for dep in dependencies.iter() {
                 if dep.uses_default_features {
                     enable_default_features.insert(dep.name.as_str());
                 }
@@ -172,19 +174,20 @@ impl BindgenPathsLayer for CrateConfigSupplier {
         Some(
             found
                 .into_iter()
-                .map(|(name, src_path)| {
+                .map(|(package_name, crate_name, src_path)| {
                     let mut features = vec![];
-                    if let Some(f) = feature_map.get(name.as_str()) {
+                    if let Some(f) = feature_map.get(package_name.as_str()) {
                         features.extend(f.iter().map(|s| s.to_string()));
                     }
-                    if enable_default_features.contains(name.as_str()) {
-                        if let Some(f) = default_feature_map.get(name.as_str()) {
+                    if enable_default_features.contains(package_name.as_str()) {
+                        if let Some(f) = default_feature_map.get(package_name.as_str()) {
                             features.extend(f.iter().map(|s| s.to_string()));
                         }
                     }
                     SourceCrate {
+                        package_name,
+                        crate_name,
                         features,
-                        name,
                         src_path,
                     }
                 })
@@ -197,17 +200,49 @@ fn should_parse_package(package: &Package) -> bool {
     let skip_parsing = package
         .metadata
         .pointer("/uniffi/skip_parsing")
-        .and_then(|v| v.as_bool())
+        .map(|v| {
+            v.as_bool().unwrap_or_else(|| {
+                panic!(
+                    "uniffi::skip_parsing not a bool (package: {})",
+                    package.name
+                )
+            })
+        })
         .unwrap_or_default();
     let depends_on_uniffi = package.dependencies.iter().any(|d| d.name == "uniffi");
 
     depends_on_uniffi && !skip_parsing
 }
 
-fn find_src_lib(package: &Package) -> Option<Utf8PathBuf> {
+fn dependencies_to_parse(package: &Package) -> Vec<&Dependency> {
+    let mut skip_set = HashSet::new();
+    if let Some(value) = package.metadata.pointer("/uniffi/skip_dependencies") {
+        let list = value.as_array().unwrap_or_else(|| {
+            panic!(
+                "uniffi::skip_dependencies not a list (package: {})",
+                package.name
+            )
+        });
+        for v in list {
+            skip_set.insert(v.as_str().unwrap_or_else(|| {
+                panic!(
+                    "uniffi::skip_dependencies not a list of strings (package: {})",
+                    package.name
+                )
+            }));
+        }
+    }
+    package
+        .dependencies
+        .iter()
+        .filter(move |d| !skip_set.contains(d.name.as_str()))
+        .collect()
+}
+
+fn find_src_lib(package: &Package) -> Option<(String, Utf8PathBuf)> {
     package
         .targets
         .iter()
         .find(|t| t.is_lib() || t.is_rlib() || t.is_cdylib() || t.is_staticlib())
-        .map(|t| t.src_path.clone())
+        .map(|t| (t.name.clone(), t.src_path.clone()))
 }
