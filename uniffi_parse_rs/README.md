@@ -5,7 +5,7 @@ This crate is experimental and not supported by any existing bindings.
 
 # How to use it
 
-Specify `src::[rust-crate-name]` as the source when generating bindings.
+Specify `src:[rust-crate-name]` as the source when generating bindings.
 `uniffi_bindgen` will use `uniffi_parse_rs` to parse the source.
 
 ## Skipping parsing for some crates
@@ -18,12 +18,13 @@ To skip a crate from being parsed ` use:
 skip_parsing = true
 ```
 
-To skip a crate's dependencies from being parsed use:
+The top-level crate (i.e. the one from `src:[rust-crate-name]`) can control parsing
+for it's dependencies and transitive dependencies using the `exclude_packages` config value:
 ```
 [package.metadata.uniffi]
-skip_dependencies = [
-    "crate-one",
-    "crate-two",
+exclude_packages = [
+    "package-one",
+    "package-two",
     // ...
 ]
 ```
@@ -48,6 +49,11 @@ skip_dependencies = [
 * Parsing inside function bodies.  All items must be top-level items in their modules.
 * `use` statements or Type aliases that go through crates that aren't parsed.
 * Checksum checks are currently disabled (https://github.com/mozilla/uniffi-rs/issues/2932)
+
+# What's different
+* If a Rust package generates a library with a different name than the package,
+  the library name will be used for the foreign module.
+  The `uniffi_parse_rs` name matches the crate name in Rust.
 
 # Extra requirements
 * Types and functions used in the API must be `pub` and reachable from outside crates.
