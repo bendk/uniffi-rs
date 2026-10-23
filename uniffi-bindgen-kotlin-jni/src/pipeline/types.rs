@@ -632,3 +632,39 @@ impl TypeNode {
         matches!(self.ty, Type::CallbackInterface { .. })
     }
 }
+
+impl TypeDefinition {
+    pub fn self_type(&self) -> &TypeNode {
+        match self {
+            Self::Record(r) => &r.self_type,
+            Self::Enum(e) => &e.self_type,
+            Self::Class(c) => &c.self_type,
+            Self::CallbackInterface(c) => &c.self_type,
+            Self::Custom(c) => &c.self_type,
+            Self::Box(b) => &b.self_type,
+            Self::Optional(o) => &o.self_type,
+            Self::Sequence(s) => &s.self_type,
+            Self::Map(m) => &m.self_type,
+            Self::Set(s) => &s.self_type,
+            Self::Timestamp(tn) | Self::Duration(tn) => &tn,
+        }
+    }
+
+    pub fn type_id(&self) -> u64 {
+        match self {
+            TypeDefinition::Record(r) => r.self_type.id,
+            TypeDefinition::Enum(e) => e.self_type.id,
+            TypeDefinition::Optional(o) => o.self_type.id,
+            TypeDefinition::Sequence(s) => s.self_type.id,
+            TypeDefinition::Map(m) => m.self_type.id,
+            TypeDefinition::Set(s) => s.self_type.id,
+            TypeDefinition::Class(c) => c.self_type.id,
+            TypeDefinition::Custom(c) => c.self_type.id,
+            TypeDefinition::CallbackInterface(c) => c.self_type.id,
+            TypeDefinition::Box(b) => b.self_type.id,
+            TypeDefinition::Timestamp(type_node) | TypeDefinition::Duration(type_node) => {
+                type_node.id
+            }
+        }
+    }
+}

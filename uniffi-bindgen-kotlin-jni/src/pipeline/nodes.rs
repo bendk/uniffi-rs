@@ -18,7 +18,9 @@ uniffi_pipeline::use_prev_node!(general::Type);
 pub struct Root {
     pub cdylib: Option<String>,
     pub packages: Vec<Package>,
-    pub has_async_fns: bool,
+    // Type definitions for non-user types
+    pub builtin_type_definitions: Vec<TypeDefinition>,
+    pub scaffolding_lift_vars: Vec<RustStaticLiftVar>,
 }
 
 #[derive(Debug, Clone, Node, MapNode)]
@@ -27,11 +29,16 @@ pub struct Root {
 pub struct Package {
     pub name: String,
     pub crate_name: String,
+    /// JVM class name that the FFI functions for this package will be placed in
+    ///
+    /// These are static Kotlin functions.
+    /// When Kotlin generates the bytecode it constructs a class named `PackageNameKt` for them.
+    pub ffi_class_name: String,
     pub config: Config,
     pub functions: Vec<Function>,
+    pub interfaces: Vec<Interface>,
     pub type_definitions: Vec<TypeDefinition>,
     pub imports: IndexSet<String>,
-    pub has_async_fns: bool,
 }
 
 #[derive(Debug, Clone, Node)]
@@ -39,7 +46,6 @@ pub struct Package {
 pub enum TypeDefinition {
     Record(Record),
     Enum(Enum),
-    Interface(Interface),
     Class(Class),
     CallbackInterface(CallbackInterface),
     Custom(CustomType),
@@ -353,6 +359,18 @@ pub struct SetType {
     pub self_type: TypeNode,
     // Size of each item, when packed in a FFI buffer
     pub item_size: usize,
+}
+
+/// Rust static variable for the Kotlin lift function
+///
+/// We generate these for each lift function we need to call from Rust:
+///  * non-primitive types that are returned
+///  * error types that get thrown from Rust functions.
+///  * the inner type of boxed types
+#[derive(Debug, Clone, Node, MapNode)]
+pub struct RustStaticLiftVar {
+    pub jvm_class_name: String,
+    pub type_node: TypeNode,
 }
 
 /// Wrap `Type` so that we can add extra fields that are set for all variants.

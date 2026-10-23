@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::collections::BTreeSet;
+use std::mem;
 
 use uniffi_bindgen::pipeline::general::sort::sort_type_definitions_ignore_container_children;
 
@@ -21,14 +21,36 @@ pub fn map_root(mut input: general::Root, context: &Context) -> Result<Root> {
     }
 
     context.update_from_root(&input)?;
-    let packages = Vec::from_iter(input.namespaces.map_node(&context)?.into_values());
-    let has_async_fns = packages.iter().any(|p| p.has_async_fns);
 
-    Ok(Root {
+    let mut packages = Vec::from_iter(input.namespaces.map_node(&context)?.into_values());
+
+    // Ensure that type definitions only appear the first package that uses them.
+    let mut builtin_type_definitions = vec![];
+    let mut type_id_to_jvm_class = HashMap::new();
+    for package in packages.iter_mut() {
+        for type_def in mem::take(&mut package.type_definitions) {
+            let type_node = type_def.self_type();
+            if type_id_to_jvm_class.contains_key(&type_node.id) {
+                continue;
+            }
+            if type_node.ty.has_user_type() {
+                type_id_to_jvm_class.insert(type_node.id, package.ffi_class_name.to_string());
+                package.type_definitions.push(type_def);
+            } else {
+                type_id_to_jvm_class.insert(type_node.id, "UniffiKt".to_string());
+                builtin_type_definitions.push(type_def);
+            }
+        }
+    }
+
+    let mut root = Root {
         cdylib: input.cdylib,
+        builtin_type_definitions,
         packages,
-        has_async_fns,
-    })
+        scaffolding_lift_vars: vec![],
+    };
+    root.populate_scaffolding_lift_vars(type_id_to_jvm_class)?;
+    Ok(root)
 }
 
 impl Root {
@@ -52,62 +74,48 @@ impl Root {
         self.packages.iter().flat_map(Package::jni_methods)
     }
 
-    /// Type definitions to generate FFI functions for
-    ///
-    /// This de-dupes the type definitions for all packages so we only don't generate duplicate
-    /// functions for types that may be used in multiple packages like `Vec<u32>`.
-    pub fn ffi_type_definitions(&self) -> impl Iterator<Item = &TypeDefinition> {
-        let mut seen = HashSet::new();
-        self.packages
+    pub fn type_definitions(&self) -> impl Iterator<Item = &TypeDefinition> {
+        self.builtin_type_definitions
             .iter()
-            .flat_map(|p| &p.type_definitions)
-            .filter(move |type_def| {
-                seen.insert(match type_def {
-                    TypeDefinition::Record(r) => r.self_type.id,
-                    TypeDefinition::Enum(e) => e.self_type.id,
-                    TypeDefinition::Optional(o) => o.self_type.id,
-                    TypeDefinition::Sequence(s) => s.self_type.id,
-                    TypeDefinition::Map(m) => m.self_type.id,
-                    TypeDefinition::Set(s) => s.self_type.id,
-                    TypeDefinition::Class(c) => c.self_type.id,
-                    TypeDefinition::Custom(c) => c.self_type.id,
-                    TypeDefinition::CallbackInterface(c) => c.self_type.id,
-                    TypeDefinition::Box(b) => b.self_type.id,
-                    TypeDefinition::Timestamp(type_node) | TypeDefinition::Duration(type_node) => {
-                        type_node.id
-                    }
-                    TypeDefinition::Interface(_) => return false,
-                })
-            })
+            .chain(self.packages.iter().flat_map(|p| &p.type_definitions))
     }
 
-    /// Types where we need to call the Kotlin lift function from Rust
-    ///
-    /// We need to do this for:
-    ///  * non-primitive types that are returned
-    ///  * error types that get thrown from Rust functions.
-    ///  * the inner type of boxed types
-    pub fn lift_kt_from_rust_types(&self) -> impl Iterator<Item = &TypeNode> {
+    fn populate_scaffolding_lift_vars(
+        &mut self,
+        jvm_class_map: HashMap<u64, String>,
+    ) -> Result<()> {
         let mut seen = HashSet::new();
-        let mut type_nodes = vec![];
-        self.visit(|callable: &Callable| {
+        let mut lift_vars = vec![];
+        let mut add_lift_var = |type_node: &TypeNode| {
+            if seen.insert(type_node.id) {
+                let jvm_class_name = match jvm_class_map.get(&type_node.id) {
+                    Some(n) => n.to_string(),
+                    None => bail!("Can't find JVM class for {type_node:?}"),
+                };
+                lift_vars.push(RustStaticLiftVar {
+                    jvm_class_name,
+                    type_node: type_node.clone(),
+                });
+            }
+            Ok(())
+        };
+
+        self.try_visit(|callable: &Callable| {
             if let Some(return_type) = callable.return_type() {
-                if !return_type.lowers_to_primitive() && seen.insert(return_type.id) {
-                    type_nodes.push(return_type);
+                if !return_type.lowers_to_primitive() {
+                    add_lift_var(return_type)?;
                 }
             }
             if let Some(throws_type) = callable.throws_type() {
-                if seen.insert(throws_type.id) {
-                    type_nodes.push(throws_type);
-                }
+                add_lift_var(throws_type)?;
             }
-        });
-        self.visit(|b: &BoxedType| {
-            if seen.insert(b.inner.id) {
-                type_nodes.push(&b.inner);
-            }
-        });
-        type_nodes.into_iter()
+            Ok(())
+        })?;
+        self.try_visit(|b: &BoxedType| {
+            add_lift_var(&b.inner)
+        })?;
+        self.scaffolding_lift_vars = lift_vars;
+        Ok(())
     }
 
     pub fn rust_async_callable_results(&self) -> impl Iterator<Item = &CallableResult> {
@@ -142,20 +150,6 @@ impl Root {
 
     pub fn boxes(&self) -> impl Iterator<Item = &BoxedType> {
         self.packages.iter().flat_map(Package::boxes)
-    }
-
-    pub fn imports(&self) -> impl Iterator<Item = &str> + '_ {
-        // Use a btree set to de-dupe and sort the imports
-        let mut imports: BTreeSet<_> = self
-            .packages
-            .iter()
-            .flat_map(|p| p.imports.iter().map(String::as_str))
-            .collect();
-        if self.has_async_fns {
-            // Needed so that we can use the extension method
-            imports.insert("kotlinx.coroutines.launch");
-        }
-        imports.into_iter()
     }
 
     pub fn disable_java_cleaner(&self) -> bool {

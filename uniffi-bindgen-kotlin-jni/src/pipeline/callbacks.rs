@@ -112,6 +112,10 @@ impl CallbackInterface {
     pub fn impl_struct_rs(&self) -> String {
         format!("UniffiCallbackImpl{}", self.self_type.id)
     }
+
+    pub fn jvm_class_name(&self) -> String {
+        format!("{}Kt", self.crate_name.to_upper_camel_case())
+    }
 }
 
 impl CallbackMethod {

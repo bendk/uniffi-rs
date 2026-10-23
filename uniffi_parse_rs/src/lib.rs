@@ -8,11 +8,12 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 pub use target_lexicon::Triple;
 pub use uniffi_meta::MetadataGroup;
 
 mod attrs;
+mod cfg_select;
 mod compile_env;
 mod custom_types;
 mod enums;
@@ -41,16 +42,15 @@ pub use enums::{Enum, Variant};
 pub use errors::{Error, ErrorContext, ErrorKind};
 pub use functions::{Argument, Function, ReturnType};
 pub use impls::Impl;
-pub use ir::Ir;
+pub use ir::{Ir, IrChanges, VisitUnresolvedItem};
 pub use items::{BuiltinItem, Item};
 pub use modules::Module;
 pub use objects::{Constructor, Method, Object, SelfArg};
 pub use paths::{ChildItem, Namespace, RPath, Visibility};
 pub use public_paths::ItemNames;
 pub use records::{Field, Record};
-pub use trait_impls::TraitImpl;
 pub use traits::Trait;
-pub use types::GenericArgs;
+pub use types::{GenericArgs, Type};
 pub use use_::{parse_use, UseGlob, UseItem};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -87,29 +87,33 @@ impl Parser {
         name: &str,
         path: &Utf8Path,
         features: Vec<String>,
-    ) -> anyhow::Result<&Module> {
+    ) -> anyhow::Result<()> {
         let compile_env = CompileEnv::new(self.target.clone(), features);
         self.ir
             .add_crate_root(name, path, compile_env)
             .map_err(|e| anyhow::anyhow!("{e}"))
     }
 
-    pub fn add_udl_metadata(
-        &mut self,
-        crate_name: &str,
-        items: impl IntoIterator<Item = uniffi_meta::Metadata>,
-        path: &Utf8Path,
-    ) -> anyhow::Result<()> {
-        note_source_file(path);
-        self.ir
-            .add_udl_metadata(crate_name, items)
-            .map_err(|e| anyhow::anyhow!("{e}"))
-    }
-
-    pub fn into_uniffi_meta(mut self) -> anyhow::Result<MetadataGroupMap> {
+    /// Consume the parser into a [uniffi_meta::MetadataGroupMap]
+    ///
+    /// `udl_loader` inputs (crate_name, udl_namespace)
+    /// and returns a (udl_path, metadata) pair for the UDL file.
+    pub fn into_uniffi_meta<F>(mut self, mut udl_loader: F) -> anyhow::Result<MetadataGroupMap>
+    where
+        F: FnMut(&str, &str) -> anyhow::Result<(Utf8PathBuf, MetadataGroup)>,
+    {
         self.ir
             .resolve_items()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
+        for crate_root in self.ir.crate_roots.values_mut() {
+            let udl_name = crate_root.udl_name().map_err(|e| anyhow::anyhow!("{e}"))?;
+            let module = crate_root.module_mut();
+            if let Some(udl_name) = udl_name {
+                let (path, metadata) = udl_loader(&module.ident.to_string(), &udl_name)?;
+                note_source_file(&path);
+                module.add_udl_metadata(metadata.items);
+            }
+        }
         self.ir
             .into_metadata_group_map()
             .map_err(|e| anyhow::anyhow!("{e}"))

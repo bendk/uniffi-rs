@@ -60,7 +60,7 @@ unsafe fn {{ meth.dispatch_fn_rs }}(
     {%- endfor %}
 ) -> uniffi::Result<{{ meth.callable.result.return_type_rs() }}> {
     static METHOD: uniffi_jni::CachedStaticMethod = uniffi_jni::CachedStaticMethod::new(
-        c"uniffi/UniffiKt",
+        c"uniffi/{{ cbi.jvm_class_name() }}",
         c"{{ meth.dispatch_fn_kt }}",
         c"{{ meth.jni_signature() }}",
     );
@@ -142,7 +142,7 @@ async unsafe fn {{ meth.dispatch_fn_rs }}(
     {%- endfor %}
 ) -> uniffi::Result<{{ meth.callable.result.return_type_rs() }}> {
     static METHOD: uniffi_jni::CachedStaticMethod = uniffi_jni::CachedStaticMethod::new(
-        c"uniffi/UniffiKt",
+        c"uniffi/{{ cbi.jvm_class_name() }}",
         c"{{ meth.dispatch_fn_kt }}",
         c"{{ meth.jni_signature() }}",
     );
@@ -178,7 +178,7 @@ async unsafe fn {{ meth.dispatch_fn_rs }}(
 impl Drop for {{ cbi.impl_struct_rs() }} {
     fn drop(&mut self) {
         static METHOD: uniffi_jni::CachedStaticMethod = uniffi_jni::CachedStaticMethod::new(
-            c"uniffi/UniffiKt",
+            c"uniffi/{{ cbi.jvm_class_name() }}",
             c"{{ cbi.free_fn_kt() }}",
             c"(J)V",
         );
