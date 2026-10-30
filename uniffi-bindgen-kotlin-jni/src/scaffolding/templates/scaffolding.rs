@@ -22,7 +22,7 @@ mod uniffi_bindgen_kotlin_jni_scaffolding {
     {%- filter indent(4) %}{% include "jni_method.rs" %}{% endfilter %}
     {%- endfor %}
 
-    {%- for type_def in root.ffi_type_definitions() %}
+    {%- for type_def in root.type_definitions() %}
     {%- match type_def %}
     {%- when TypeDefinition::Record(rec) %}
     {%- filter indent(4) %}{% include "record.rs" %}{% endfilter %}
@@ -51,7 +51,6 @@ mod uniffi_bindgen_kotlin_jni_scaffolding {
     {%- filter indent(4) %}{% include "timestamp.rs" %}{% endfilter %}
     {%- when TypeDefinition::Duration(type_node) %}
     {%- filter indent(4) %}{% include "duration.rs" %}{% endfilter %}
-    {%- when TypeDefinition::Interface(_) %}
     {%- endmatch %}
     {%- endfor %}
 }

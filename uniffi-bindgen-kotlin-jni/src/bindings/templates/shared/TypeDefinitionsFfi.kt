@@ -1,20 +1,4 @@
-@file:OptIn(kotlin.ExperimentalUnsignedTypes::class)
-package uniffi
-
-{%- for import in root.imports() %}
-import {{ import }}
-{%- endfor %}
-
-class InternalException(message: kotlin.String) : Exception(message)
-
-{% include "Async.kt" %}
-{% include "FfiBuffer.kt" %}
-{% include "LiftLower.kt" %}
-{% include "Scaffolding.kt" %}
-{% include "Interfaces.kt" %}
-{% include "CallbackInterfaces.kt" %}
-
-{%- for type_def in root.ffi_type_definitions() %}
+{%- for type_def in type_definitions %}
 {%- match type_def %}
 {%- when TypeDefinition::Record(rec) %}
 {% include "RecordFfi.kt" %}
@@ -43,6 +27,5 @@ class InternalException(message: kotlin.String) : Exception(message)
 {% include "TimestampFfi.kt" %}
 {%- when TypeDefinition::Duration(type_node) %}
 {% include "DurationFfi.kt" %}
-{%- when TypeDefinition::Interface(_) %}
 {%- endmatch %}
 {%- endfor %}

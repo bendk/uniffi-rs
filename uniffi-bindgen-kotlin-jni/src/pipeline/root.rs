@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::collections::BTreeSet;
+use std::mem;
 
 use uniffi_bindgen::pipeline::general::sort::sort_type_definitions_ignore_container_children;
 
@@ -21,13 +21,48 @@ pub fn map_root(mut input: general::Root, context: &Context) -> Result<Root> {
     }
 
     context.update_from_root(&input)?;
+
+    // Map packages, ensuring that type definitions only appear in one of them
+    let mut type_definitions_seen = HashSet::new();
+    let mut builtin_type_definitions = vec![];
+    for namespace in input.namespaces.values_mut() {
+        for type_def in mem::take(&mut namespace.type_definitions) {
+            // Filter out type_definitions we've already seen
+            let type_id = match &type_def {
+                general::TypeDefinition::Record(r) => r.self_type.id,
+                general::TypeDefinition::Enum(e) => e.self_type.id,
+                general::TypeDefinition::Optional(o) => o.self_type.id,
+                general::TypeDefinition::Sequence(s) => s.self_type.id,
+                general::TypeDefinition::Map(m) => m.self_type.id,
+                general::TypeDefinition::Set(s) => s.self_type.id,
+                general::TypeDefinition::Interface(c) => c.self_type.id,
+                general::TypeDefinition::Custom(c) => c.self_type.id,
+                general::TypeDefinition::CallbackInterface(c) => c.self_type.id,
+                general::TypeDefinition::Box(b) => b.self_type.id,
+                general::TypeDefinition::Simple(tn) => tn.id,
+                // uniffi-bindgen-kotlin-jni doesn't generate any code for external types.
+                // For example, it fully qualifies all type names so they don't need to be imported.
+                general::TypeDefinition::External(_) => continue,
+            };
+            if type_definitions_seen.insert(type_id) {
+                continue;
+            }
+            // builtin type definitions belong to the root node
+            if type_def.self_type().has_user_type() {
+                builtin_type_definitions.push(type_def);
+            } else {
+                namespace.type_definitions.push(type_def);
+            }
+        }
+    }
+
     let packages = Vec::from_iter(input.namespaces.map_node(&context)?.into_values());
-    let has_async_fns = packages.iter().any(|p| p.has_async_fns);
+    let builtin_type_definitions = packages::map_type_definitions(builtin_type_definitions, &context)?;
 
     Ok(Root {
         cdylib: input.cdylib,
+        builtin_type_definitions,
         packages,
-        has_async_fns,
     })
 }
 
@@ -52,33 +87,14 @@ impl Root {
         self.packages.iter().flat_map(Package::jni_methods)
     }
 
-    /// Type definitions to generate FFI functions for
-    ///
-    /// This de-dupes the type definitions for all packages so we only don't generate duplicate
-    /// functions for types that may be used in multiple packages like `Vec<u32>`.
-    pub fn ffi_type_definitions(&self) -> impl Iterator<Item = &TypeDefinition> {
-        let mut seen = HashSet::new();
-        self.packages
+    pub fn type_definitions(&self) -> impl Iterator<Item = &TypeDefinition> {
+        self.builtin_type_definitions
             .iter()
-            .flat_map(|p| &p.type_definitions)
-            .filter(move |type_def| {
-                seen.insert(match type_def {
-                    TypeDefinition::Record(r) => r.self_type.id,
-                    TypeDefinition::Enum(e) => e.self_type.id,
-                    TypeDefinition::Optional(o) => o.self_type.id,
-                    TypeDefinition::Sequence(s) => s.self_type.id,
-                    TypeDefinition::Map(m) => m.self_type.id,
-                    TypeDefinition::Set(s) => s.self_type.id,
-                    TypeDefinition::Class(c) => c.self_type.id,
-                    TypeDefinition::Custom(c) => c.self_type.id,
-                    TypeDefinition::CallbackInterface(c) => c.self_type.id,
-                    TypeDefinition::Box(b) => b.self_type.id,
-                    TypeDefinition::Timestamp(type_node) | TypeDefinition::Duration(type_node) => {
-                        type_node.id
-                    }
-                    TypeDefinition::Interface(_) => return false,
-                })
-            })
+            .chain(
+                self.packages
+                    .iter()
+                    .flat_map(|p| &p.type_definitions)
+            )
     }
 
     /// Types where we need to call the Kotlin lift function from Rust
@@ -142,20 +158,6 @@ impl Root {
 
     pub fn boxes(&self) -> impl Iterator<Item = &BoxedType> {
         self.packages.iter().flat_map(Package::boxes)
-    }
-
-    pub fn imports(&self) -> impl Iterator<Item = &str> + '_ {
-        // Use a btree set to de-dupe and sort the imports
-        let mut imports: BTreeSet<_> = self
-            .packages
-            .iter()
-            .flat_map(|p| p.imports.iter().map(String::as_str))
-            .collect();
-        if self.has_async_fns {
-            // Needed so that we can use the extension method
-            imports.insert("kotlinx.coroutines.launch");
-        }
-        imports.into_iter()
     }
 
     pub fn disable_java_cleaner(&self) -> bool {
