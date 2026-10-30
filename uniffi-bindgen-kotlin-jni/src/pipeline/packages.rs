@@ -8,22 +8,24 @@ pub fn map_namespace(input: general::Namespace, context: &Context) -> Result<Pac
     let mut context = context.clone();
     context.update_from_namespace(&input);
     let config = context.config()?.clone();
+    let has_async_fns = input.has_descendant(|callable: &general::Callable| callable.is_async());
     let imports = config
         .custom_types
         .values()
         .flat_map(|c| c.imports.clone())
         .flatten()
+        .chain(has_async_fns.then(|| "kotlinx.coroutines.launch".into()))
         .collect();
-    let has_async_fns = input.has_descendant(|callable: &general::Callable| callable.is_async());
 
     Ok(Package {
         name: context.package_name_for_namespace(&input.name)?.to_string(),
+        ffi_class_name: format!("{}Kt", input.name.to_upper_camel_case()),
         crate_name: input.name,
         config,
         functions: input.functions.map_node(&context)?,
+        interfaces: map_interfaces(&input.type_definitions, &context)?,
         type_definitions: map_type_definitions(input.type_definitions, &context)?,
         imports,
-        has_async_fns,
     })
 }
 
@@ -41,15 +43,9 @@ pub fn map_type_definitions(
                 mapped.push(TypeDefinition::Enum(en.map_node(context)?));
             }
             general::TypeDefinition::Interface(int) => {
-                mapped.push(TypeDefinition::Interface(interfaces::map_interface(
-                    &int, context,
-                )?));
                 mapped.push(TypeDefinition::Class(int.map_node(context)?));
             }
             general::TypeDefinition::CallbackInterface(cbi) => {
-                mapped.push(TypeDefinition::Interface(
-                    callbacks::interface_for_callback_interface(&cbi, context)?,
-                ));
                 mapped.push(TypeDefinition::CallbackInterface(cbi.map_node(context)?));
             }
             general::TypeDefinition::Custom(c) => {
@@ -75,12 +71,30 @@ pub fn map_type_definitions(
                 Type::Timestamp => mapped.push(TypeDefinition::Timestamp(inner.map_node(context)?)),
                 _ => (),
             },
-            // No need to do anything for external definitions since we generate everything in one
-            // Rust module.
+            // uniffi-bindgen-kotlin-jni doesn't generate code for external types.
+            // For example, it uses fully qualified names instead of importing them.
             general::TypeDefinition::External(_) => (),
         }
     }
     Ok(mapped)
+}
+
+pub fn map_interfaces(
+    type_defs: &[general::TypeDefinition],
+    context: &Context,
+) -> Result<Vec<Interface>> {
+    type_defs
+        .iter()
+        .filter_map(|type_def| match type_def {
+            general::TypeDefinition::Interface(int) => {
+                Some(interfaces::map_interface(&int, context))
+            }
+            general::TypeDefinition::CallbackInterface(cbi) => {
+                Some(callbacks::interface_for_callback_interface(&cbi, context))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 impl Package {
