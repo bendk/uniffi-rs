@@ -23,8 +23,9 @@
 /// "UT" means an arbitrary `UniFfiTag` type.
 use crate::{
     check_remaining, derive_ffi_traits, ffi_converter_rust_buffer_lift_and_lower, metadata,
-    ConvertError, FfiConverter, Lift, LiftRef, LiftReturn, Lower, LowerError, LowerReturn,
-    MetadataBuffer, Result, RustBuffer, RustCallError, TypeId, UnexpectedUniFFICallbackError,
+    ConvertError, FfiConverter, FfiConverterArc, Handle, Lift, LiftRef, LiftReturn, Lower,
+    LowerError, LowerReturn, MetadataBuffer, Result, RustBuffer, RustCallError, TypeId,
+    UnexpectedUniFFICallbackError,
 };
 use anyhow::bail;
 use bytes::buf::{Buf, BufMut};
@@ -653,3 +654,129 @@ where
 unsafe impl<UT> LiftRef<UT> for str {
     type LiftType = String;
 }
+
+// Implement `FfiConverter` for a closure type with a set number of arguments.
+// We then call this 0 to 32 arguments.
+macro_rules! impl_ffi_converter_for_closure {
+    ($arg_count:literal $(, $arg:ident)*) => {
+        unsafe impl<UT, $($arg,)* R> FfiConverterArc<UT> for dyn Fn($($arg),*) -> R + 'static + Send + Sync
+        where
+            $(
+                $arg: TypeId<UT>,
+            )*
+            R: TypeId<UT>,
+        {
+            type FfiType = Handle;
+
+            fn lower(obj: Arc<Self>) -> Handle {
+                trace!("lower: closure {:?}", ::std::sync::Arc::as_ptr(&obj));
+                // Wrap `obj` in a second arc and create the handle from that.
+                // https://mozilla.github.io/uniffi-rs/latest/internals/object_references.html
+                Handle::from_arc(Arc::new(obj))
+            }
+
+            fn try_lift(v: Handle) -> Result<Arc<Self>> {
+                let obj: Arc<Arc<Self>> = unsafe { v.into_arc() };
+                ::std::result::Result::Ok((*obj).clone())
+            }
+
+            fn write(obj: Arc<Self>, buf: &mut Vec<u8>) {
+                BufMut::put_u64(buf, Self::lower(obj).as_raw());
+            }
+
+            fn try_read(buf: &mut &[u8]) -> Result<Arc<Self>> {
+                check_remaining(buf, 8)?;
+                Self::try_lift(Handle::from_raw_unchecked(Buf::get_u64(buf)))
+            }
+
+            const TYPE_ID_META: MetadataBuffer = MetadataBuffer::from_code(metadata::codes::TYPE_CLOSURE)
+                .concat_u32($arg_count)
+                $(
+                    .concat($arg::TYPE_ID_META)
+                )*
+                .concat(R::TYPE_ID_META);
+        }
+    }
+}
+
+impl_ffi_converter_for_closure!(0);
+impl_ffi_converter_for_closure!(1, A1);
+impl_ffi_converter_for_closure!(2, A1, A2);
+impl_ffi_converter_for_closure!(3, A1, A2, A3);
+impl_ffi_converter_for_closure!(4, A1, A2, A3, A4);
+impl_ffi_converter_for_closure!(5, A1, A2, A3, A4, A5);
+impl_ffi_converter_for_closure!(6, A1, A2, A3, A4, A5, A6);
+impl_ffi_converter_for_closure!(7, A1, A2, A3, A4, A5, A6, A7);
+impl_ffi_converter_for_closure!(8, A1, A2, A3, A4, A5, A6, A7, A8);
+impl_ffi_converter_for_closure!(9, A1, A2, A3, A4, A5, A6, A7, A8, A9);
+impl_ffi_converter_for_closure!(10, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10);
+impl_ffi_converter_for_closure!(11, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11);
+impl_ffi_converter_for_closure!(12, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12);
+impl_ffi_converter_for_closure!(13, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13);
+impl_ffi_converter_for_closure!(14, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14);
+impl_ffi_converter_for_closure!(
+    15, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15
+);
+impl_ffi_converter_for_closure!(
+    16, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16
+);
+impl_ffi_converter_for_closure!(
+    17, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17
+);
+impl_ffi_converter_for_closure!(
+    18, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18
+);
+impl_ffi_converter_for_closure!(
+    19, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19
+);
+impl_ffi_converter_for_closure!(
+    20, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20
+);
+impl_ffi_converter_for_closure!(
+    21, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21
+);
+impl_ffi_converter_for_closure!(
+    22, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22
+);
+impl_ffi_converter_for_closure!(
+    23, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23
+);
+impl_ffi_converter_for_closure!(
+    24, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24
+);
+impl_ffi_converter_for_closure!(
+    25, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25
+);
+impl_ffi_converter_for_closure!(
+    26, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25, A26
+);
+impl_ffi_converter_for_closure!(
+    27, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25, A26, A27
+);
+impl_ffi_converter_for_closure!(
+    28, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25, A26, A27, A28
+);
+impl_ffi_converter_for_closure!(
+    29, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25, A26, A27, A28, A29
+);
+impl_ffi_converter_for_closure!(
+    30, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25, A26, A27, A28, A29, A30
+);
+impl_ffi_converter_for_closure!(
+    31, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25, A26, A27, A28, A29, A30, A31
+);
+impl_ffi_converter_for_closure!(
+    32, A1, A2, A3, A4, A5, A6, A7, A8, A9, A10, A11, A12, A13, A14, A15, A16, A17, A18, A19, A20,
+    A21, A22, A23, A24, A25, A26, A27, A28, A29, A30, A31, A32
+);

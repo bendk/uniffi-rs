@@ -48,7 +48,7 @@ pub enum Item {
 ///
 /// We normally identify these by seeing a `use` statement that imports them from a crate that
 /// we're not parsing the source of.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BuiltinItem {
     UnitType,
     Boolean,
@@ -74,6 +74,9 @@ pub enum BuiltinItem {
     Arc,
     Box,
     From,
+    Send,
+    Sync,
+    Fn,
     UnexpectedUniFFICallbackError,
     UniffiMacro(&'static str),
     UniffiDerive(&'static str),

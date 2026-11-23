@@ -210,6 +210,15 @@ impl<'a> MetadataReader<'a> {
             codes::TYPE_HASH_SET => Type::Set {
                 inner_type: Box::new(self.read_type()?),
             },
+            codes::TYPE_CLOSURE => {
+                let argument_types = self.read_type_list()?;
+                let (return_type, throws_type) = self.read_return_type()?;
+                Type::Closure {
+                    argument_types,
+                    return_type: return_type.map(Box::new),
+                    throws_type: throws_type.map(Box::new),
+                }
+            }
             codes::TYPE_UNIT => bail!("Unexpected TYPE_UNIT"),
             codes::TYPE_RESULT => bail!("Unexpected TYPE_RESULT"),
             _ => bail!("Unexpected metadata type code: {value:?}"),
@@ -224,6 +233,11 @@ impl<'a> MetadataReader<'a> {
             }
             _ => Some(self.read_type()?),
         })
+    }
+
+    fn read_type_list(&mut self) -> Result<Vec<Type>> {
+        let len = self.read_u32()?;
+        (0..len).map(|_| self.read_type()).collect()
     }
 
     fn read_return_type(&mut self) -> Result<(Option<Type>, Option<Type>)> {

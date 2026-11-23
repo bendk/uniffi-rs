@@ -38,3 +38,47 @@ fun helloName(name: String = "world" ): String {
 Async functions "just work" with proc-macros, while [UDL can use the `[Async]`](../udl/functions.md#async) attribute:
 
 See the [Async/Future support section](../futures.md) for details.
+
+## Closures
+
+Closures can be passed as values.
+In order to enable this, call `uniffi::closure!` macro
+and pass it the function signature.
+
+Closure values must be wrapped in an `Arc` and also be `Send + Sync`.
+Consider creating a type alias so you don't need to type everything out.
+
+Example Rust code:
+
+```rust
+/// Define the closure type
+uniffi::closure!(Fn() -> String);
+
+/// Create an alias for convenience
+pub type NameGenerator = Arc<dyn Fn() -> String + Send + Sync>;
+
+// Define a function that inputs the closure
+#[uniffi::export]
+pub fn hello_generated_name(name_gen: NameGenerator) -> String {
+    format!("Hello {}", name_gen())
+}
+```
+
+Example foreign code:
+
+```kotlin
+// Generated function
+fun helloGeneratedName(nameGen: () -> String): String {
+    // ...
+}
+
+// You can pass Kotlin lambdas to `helloGeneratedName`
+helloGeneratedName({ "Bob" })
+```
+
+Notes:
+* Closure values can be constructed on either the Rust or Foreign side.
+* Closure can be used wherever normal types are allowed,
+  including arguments, return types, and record/enum fields.
+* Only `Fn` is supported.  `FnMut` and `FnOnce` are not.
+* Result return types / throwing functions are supported.

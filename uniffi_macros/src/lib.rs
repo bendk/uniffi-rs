@@ -15,6 +15,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse_macro_input, LitStr};
 
+mod closures;
 mod custom;
 mod default;
 mod derive;
@@ -209,6 +210,20 @@ pub fn custom_newtype(tokens: TokenStream) -> TokenStream {
     custom::expand_custom_newtype(parse_macro_input!(tokens))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+#[cfg(feature = "scaffolding")]
+#[proc_macro]
+pub fn closure(tokens: TokenStream) -> TokenStream {
+    closures::expand_closure(parse_macro_input!(tokens))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+#[cfg(not(feature = "scaffolding"))]
+#[proc_macro]
+pub fn closure(_input: TokenStream) -> TokenStream {
+    TokenStream::default()
 }
 
 /// `#[remote(<kind>)]` attribute

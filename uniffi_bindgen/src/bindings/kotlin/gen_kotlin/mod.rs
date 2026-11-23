@@ -650,6 +650,7 @@ impl<T: AsType> AsCodeType for T {
             Type::Custom { name, builtin, .. } => {
                 Box::new(custom::CustomCodeType::new(name, builtin.as_codetype()))
             }
+            Type::Closure { .. } => unimplemented!("closures"),
             Type::Box { inner_type } => inner_type.as_codetype(),
         }
     }

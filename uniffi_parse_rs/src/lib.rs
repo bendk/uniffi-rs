@@ -14,6 +14,7 @@ pub use uniffi_meta::MetadataGroup;
 
 mod attrs;
 mod cfg_select;
+mod closures;
 mod compile_env;
 mod custom_types;
 mod enums;
@@ -36,6 +37,7 @@ mod traits;
 mod types;
 mod use_;
 
+pub use closures::maybe_resolve_closure;
 pub use compile_env::CompileEnv;
 pub use custom_types::CustomType;
 pub use enums::{Enum, Variant};
@@ -50,7 +52,7 @@ pub use paths::{ChildItem, Namespace, RPath, Visibility};
 pub use public_paths::ItemNames;
 pub use records::{Field, Record};
 pub use traits::Trait;
-pub use types::{GenericArgs, Type};
+pub use types::{GenericArgs, Type, TypeClosure};
 pub use use_::{parse_use, UseGlob, UseItem};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;

@@ -764,6 +764,7 @@ impl SwiftCodeOracle {
                 name,
                 self.create_code_type(*builtin),
             )),
+            Type::Closure { .. } => unimplemented!("closures"),
             Type::Box { inner_type } => self.create_code_type(*inner_type),
         }
     }

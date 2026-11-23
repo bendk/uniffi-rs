@@ -87,6 +87,24 @@ mod error {
     }
 }
 
+pub mod closures {
+    use super::error::ComplexError;
+    use std::sync::Arc;
+
+    uniffi::closure!(Fn(u32) -> String);
+
+    pub type IntToString = Arc<dyn Fn(u32) -> String + Send + Sync>;
+
+    #[uniffi::export]
+    pub fn closure_func(_c: IntToString) {}
+
+    uniffi::closure!(Fn(u32) -> Result<String, ComplexError>);
+    pub type IntToStringFallible = Arc<dyn Fn(u32) -> Result<String, ComplexError> + Send + Sync>;
+
+    #[uniffi::export]
+    pub fn closure_func_fallible(_c: IntToStringFallible) {}
+}
+
 mod many_items {
     macro_rules! many_items {
         ($($name:ident),* $(,)?) => {
@@ -775,6 +793,47 @@ mod test_metadata {
                 if cmp.module_path == "uniffi_fixture_metadata::tests::uniffi_traits" &&
                    cmp.self_name == "SpecialRecord"
         ));
+    }
+
+    #[test]
+    fn test_closure() {
+        let meta = uniffi_meta::read_metadata(
+            &closures::UNIFFI_META_UNIFFI_FIXTURE_METADATA_FUNC_CLOSURE_FUNC,
+        )
+        .unwrap();
+        let Metadata::Func(f) = meta else {
+            panic!("Unexpected metadata for `closure_func`: {meta:?}")
+        };
+        assert_eq!(
+            f.inputs[0].ty,
+            Type::Closure {
+                argument_types: vec![Type::UInt32],
+                return_type: Some(Box::new(Type::String)),
+                throws_type: None,
+            },
+        );
+    }
+
+    #[test]
+    fn test_fallible_closure() {
+        let meta = uniffi_meta::read_metadata(
+            &closures::UNIFFI_META_UNIFFI_FIXTURE_METADATA_FUNC_CLOSURE_FUNC_FALLIBLE,
+        )
+        .unwrap();
+        let Metadata::Func(f) = meta else {
+            panic!("Unexpected metadata for `closure_func`: {meta:?}")
+        };
+        assert_eq!(
+            f.inputs[0].ty,
+            Type::Closure {
+                argument_types: vec![Type::UInt32],
+                return_type: Some(Box::new(Type::String)),
+                throws_type: Some(Box::new(Type::Enum {
+                    module_path: "uniffi_fixture_metadata::tests::error".into(),
+                    name: "ComplexError".into(),
+                })),
+            },
+        );
     }
 }
 

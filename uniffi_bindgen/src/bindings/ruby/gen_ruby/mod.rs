@@ -106,6 +106,25 @@ pub fn canonical_name(t: &Type) -> String {
             canonical_name(key_type).to_upper_camel_case(),
             canonical_name(value_type).to_upper_camel_case()
         ),
+        Type::Closure {
+            argument_types,
+            return_type,
+            throws_type,
+        } => format!(
+            "Closure{}{}{}",
+            argument_types
+                .iter()
+                .map(canonical_name)
+                .collect::<String>(),
+            match return_type {
+                None => "None".to_string(),
+                Some(t) => canonical_name(t),
+            },
+            match throws_type {
+                None => "None".to_string(),
+                Some(t) => canonical_name(t),
+            },
+        ),
         Type::Box { inner_type } => canonical_name(inner_type),
     }
 }
@@ -584,6 +603,7 @@ mod filters {
             | Type::Bytes
             | Type::Duration
             | Type::Map { .. } => FfiShape::RustBuffer,
+            Type::Closure { .. } => unimplemented!("closures"),
             Type::Box { .. } => unreachable!("peeled"),
         }
     }
@@ -899,6 +919,7 @@ mod filters {
                     )
                 }
             }
+            Type::Closure { .. } => unimplemented!("closures"),
             Type::Box { inner_type } => coerce_rb_inner(nm, ns, inner_type, wrapper)?,
             Type::Custom { name, builtin, .. } => {
                 // Config-backed and imported customs skip consumer-side builtin

@@ -151,6 +151,9 @@ impl<'ir> RPath<'ir> {
                     BuiltinItem::HashSet => path.push_str("HashSet"),
                     BuiltinItem::Option => path.push_str("Option"),
                     BuiltinItem::Result => path.push_str("Result"),
+                    BuiltinItem::Send => path.push_str("Send"),
+                    BuiltinItem::Sync => path.push_str("Sync"),
+                    BuiltinItem::Fn => path.push_str("Fn"),
                     BuiltinItem::UniffiMacro(name) | BuiltinItem::UniffiDerive(name) => {
                         path.push_str(name)
                     }
@@ -201,7 +204,7 @@ impl<'ir> RPath<'ir> {
                 namespace
             };
             trace!(
-                "  resolve (path: {}, ident: {} namespace: {child_namespace:?})",
+                "  resolve (path: {}, ident: {}, namespace: {child_namespace:?})",
                 current_path.path_string(),
                 seg.ident
             );
@@ -215,7 +218,14 @@ impl<'ir> RPath<'ir> {
                 Err(e) => return Err(e),
             }
         }
-        trace!("  resolved: {}", current_path.path_string());
+        trace!(
+            "  resolved: {} ({})",
+            current_path.path_string(),
+            match current_path.item() {
+                Ok(i) => format!("{i:?}"),
+                Err(e) => e.kind.to_string(),
+            }
+        );
         Ok(current_path)
     }
 
@@ -600,6 +610,17 @@ impl<'ir> RPath<'ir> {
             },
         }
     }
+
+    pub fn is_builtin(
+        &self,
+        ir: &'ir Ir,
+        cache: &mut LookupCache<'ir>,
+        path: &Path,
+        namespace: Namespace,
+        builtin: BuiltinItem,
+    ) -> bool {
+        self.resolve_builtin(ir, cache, path, namespace) == Some(builtin)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -772,6 +793,13 @@ fn get_builtin_item(path: &Path) -> Option<&'static Item> {
         "std::sync::Arc" => Some(&Item::Builtin(BuiltinItem::Arc)),
         "std::time::SystemTime" => Some(&Item::Builtin(BuiltinItem::SystemTime)),
         "std::time::Duration" => Some(&Item::Builtin(BuiltinItem::Duration)),
+        "Send" | "std::marker::Send" | "core::marker::Send" => {
+            Some(&Item::Builtin(BuiltinItem::Send))
+        }
+        "Sync" | "std::marker::Sync" | "core::marker::Sync" => {
+            Some(&Item::Builtin(BuiltinItem::Sync))
+        }
+        "Fn" | "std::ops::Fn" | "core::ops::Fn" => Some(&Item::Builtin(BuiltinItem::Fn)),
         "cfg_select" | "std::cfg_select" | "core::cfg_select" => {
             Some(&Item::Builtin(BuiltinItem::CfgSelectMacro))
         }

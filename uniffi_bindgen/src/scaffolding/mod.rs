@@ -94,6 +94,33 @@ mod filters {
                 )
             }
             Type::Custom { name, .. } => format!("r#{name}"),
+            Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } => {
+                let mut arguments = String::new();
+                for (i, a) in argument_types.iter().enumerate() {
+                    if i > 0 {
+                        arguments.push_str(", ");
+                    }
+                    arguments.push_str(&type_rs_inner(a)?);
+                }
+                let return_type = match (return_type, throws_type) {
+                    (Some(r), Some(e)) => format!(
+                        "::std::result::Result<{}, {}>",
+                        type_rs_inner(r)?,
+                        type_rs_inner(e)?,
+                    ),
+                    (Some(r), None) => type_rs_inner(r)?,
+                    (None, Some(r)) => format!("::std::result::Result<(), {}>", type_rs_inner(r)?,),
+                    (None, None) => "()".to_string(),
+                };
+                format!(
+                    "::std::sync::Arc<dyn ::std::ops::Fn({}) -> {} + ::std::marker::Send + ::std::marker::Sync>",
+                    arguments, return_type
+                )
+            }
         })
     }
 }

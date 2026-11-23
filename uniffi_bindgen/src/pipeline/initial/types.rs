@@ -75,6 +75,7 @@ pub fn map_type(ty: uniffi_meta::Type, context: &Context) -> Result<Type> {
             name,
             builtin: builtin.map_node(context)?,
         },
+        uniffi_meta::Type::Closure { .. } => unimplemented!("closures"),
     })
 }
 

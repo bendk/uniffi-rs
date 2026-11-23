@@ -10,13 +10,13 @@ use std::{
 use proc_macro2::Span;
 use syn::{
     ext::IdentExt, spanned::Spanned, AngleBracketedGenericArguments, GenericArgument, GenericParam,
-    Generics, Ident, Path, PathArguments, TypeParamBound,
+    Generics, Ident, Path, PathArguments, TypeParamBound, TypeTraitObject,
 };
 use uniffi_meta::{ObjectImpl, TraitKind};
 
 use crate::{
-    attrs::TraitExportType, files::FileId, paths::LookupCache, BuiltinItem, Error, ErrorContext,
-    ErrorKind::*, Ir, Item, Namespace, RPath, Result,
+    attrs::TraitExportType, files::FileId, maybe_resolve_closure, paths::LookupCache, BuiltinItem,
+    Error, ErrorContext, ErrorKind::*, Ir, Item, Namespace, RPath, Result,
 };
 
 #[derive(Debug, PartialEq, Eq)]
@@ -92,6 +92,7 @@ pub enum Type {
         name: String,
         bridge_type: Box<Type>,
     },
+    Closure(TypeClosure),
     Ref {
         mutable: bool,
         ty: Box<Type>,
@@ -118,6 +119,7 @@ impl Type {
         span: Span,
         self_ty: Option<&uniffi_meta::Type>,
     ) -> Result<uniffi_meta::Type> {
+        trace!("try_into_uniffi_meta: {self:?}");
         match self {
             Type::Unit => Err(Error::new(source, span, InvalidType)),
             Type::UInt8 => Ok(uniffi_meta::Type::UInt8),
@@ -176,6 +178,19 @@ impl Type {
                     }
                 }
                 Type::Udl(ty) => Ok(ty),
+                Type::Closure(c) => {
+                    let return_type = c.return_type.into_return_type(source, span, None)?;
+
+                    Ok(uniffi_meta::Type::Closure {
+                        argument_types: c
+                            .argument_types
+                            .into_iter()
+                            .map(|t| t.try_into_uniffi_meta(source, span, None))
+                            .collect::<Result<Vec<_>>>()?,
+                        return_type: return_type.ok.map(Box::new),
+                        throws_type: return_type.err.map(Box::new),
+                    })
+                }
                 _ => Err(Error::new(source, span, InvalidType)),
             },
             Type::Box(inner) => match *inner {
@@ -212,6 +227,41 @@ impl Type {
             _ => Err(Error::new(source, span, InvalidType)),
         }
     }
+
+    pub fn into_return_type(
+        self,
+        source: FileId,
+        span: Span,
+        self_ty: Option<&uniffi_meta::Type>,
+    ) -> Result<ReturnType> {
+        Ok(match self {
+            Type::Unit => ReturnType {
+                ok: None,
+                err: None,
+            },
+            Type::Result(ok, err) => {
+                let ok = match *ok {
+                    Type::Unit => None,
+                    ty => Some(ty.try_into_uniffi_meta(source, span, self_ty)?),
+                };
+                let err = err.try_into_uniffi_meta(source, span, self_ty)?;
+                ReturnType { ok, err: Some(err) }
+            }
+            Type::Ref { .. } => {
+                return Err(Error::new(source, span, InvalidReturnType));
+            }
+            ty => ReturnType {
+                ok: Some(ty.try_into_uniffi_meta(source, span, self_ty)?),
+                err: None,
+            },
+        })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TypeClosure {
+    pub argument_types: Vec<Type>,
+    pub return_type: Box<Type>,
 }
 
 fn trait_to_uniffi_meta(
@@ -251,7 +301,10 @@ impl<'ir> RPath<'ir> {
         ty: &syn::Type,
     ) -> Result<Type> {
         self._resolve_type(ir, cache, ty, &mut ResolveTypeContext::default())
-            .map_err(|e| e.context(self.file_id(), ty.span(), "while resolving type"))
+            .map_err(|e| {
+                trace!("Path::_resolve_type failed: {:?}", e.kind);
+                e.context(self.file_id(), ty.span(), "while resolving type")
+            })
     }
 
     pub fn resolve_arg(
@@ -315,27 +368,11 @@ impl<'ir> RPath<'ir> {
         syn_ty: &syn::Type,
         self_ty: Option<&uniffi_meta::Type>,
     ) -> Result<ReturnType> {
-        Ok(match self.resolve_type(ir, cache, syn_ty)? {
-            Type::Unit => ReturnType {
-                ok: None,
-                err: None,
-            },
-            Type::Result(ok, err) => {
-                let ok = match *ok {
-                    Type::Unit => None,
-                    ty => Some(ty.try_into_uniffi_meta(self.file_id(), syn_ty.span(), self_ty)?),
-                };
-                let err = err.try_into_uniffi_meta(self.file_id(), syn_ty.span(), self_ty)?;
-                ReturnType { ok, err: Some(err) }
-            }
-            Type::Ref { .. } => {
-                return Err(Error::new(self.file_id(), syn_ty.span(), InvalidReturnType));
-            }
-            ty => ReturnType {
-                ok: Some(ty.try_into_uniffi_meta(self.file_id(), syn_ty.span(), self_ty)?),
-                err: None,
-            },
-        })
+        self.resolve_type(ir, cache, syn_ty)?.into_return_type(
+            self.file_id(),
+            syn_ty.span(),
+            self_ty,
+        )
     }
 
     pub fn resolve_self_type(
@@ -362,6 +399,7 @@ impl<'ir> RPath<'ir> {
         mut ty: &syn::Type,
         context: &mut ResolveTypeContext,
     ) -> Result<Type> {
+        trace!("Path::_resolve_type: {}", quote::quote! {#ty});
         // Unwrap paren/groups
         loop {
             match ty {
@@ -528,69 +566,81 @@ impl<'ir> RPath<'ir> {
                 }
             }
             syn::Type::TraitObject(ty_trait) => {
-                let trait_bounds = ty_trait
-                    .bounds
-                    .iter()
-                    .filter_map(|param_bound| match param_bound {
-                        TypeParamBound::Trait(trait_bound) => Some(&trait_bound.path),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>();
-                if trait_bounds.len() != 1 {
-                    return Err(Error::new(self.file_id(), ty.span(), InvalidDynTrait));
-                }
-                let trait_path = self.resolve(ir, cache, trait_bounds[0], Namespace::Type)?;
-                match trait_path.item()? {
-                    Item::Trait(tr) => {
-                        // Use the trait's own public path, not the referencing module's —
-                        // the reference must match the metadata generated for the trait's
-                        // definition, which may live in another module or crate.
-                        let names = trait_path.public_path_to_item(ir, cache)?;
-                        Ok(Type::Trait {
-                            module_path: names.module_path,
-                            name: names.name,
-                            export_ty: tr.attrs.export_ty,
-                        })
-                    }
-                    Item::Udl(uniffi_meta::Type::Object {
-                        module_path,
-                        name,
-                        imp: ObjectImpl::Trait(TraitKind::RustOnly),
-                    }) => Ok(Type::Trait {
-                        module_path: module_path.clone(),
-                        name: name.clone(),
-                        export_ty: TraitExportType::TraitInterface(TraitKind::RustOnly),
-                    }),
-                    Item::Udl(uniffi_meta::Type::Object {
-                        module_path,
-                        name,
-                        imp: ObjectImpl::Trait(TraitKind::ForeignOnly),
-                    }) => Ok(Type::Trait {
-                        module_path: module_path.clone(),
-                        name: name.clone(),
-                        export_ty: TraitExportType::TraitInterface(TraitKind::ForeignOnly),
-                    }),
-                    Item::Udl(uniffi_meta::Type::Object {
-                        module_path,
-                        name,
-                        imp: ObjectImpl::Trait(TraitKind::Both),
-                    }) => Ok(Type::Trait {
-                        module_path: module_path.clone(),
-                        name: name.clone(),
-                        export_ty: TraitExportType::TraitInterface(TraitKind::Both),
-                    }),
-                    Item::Udl(uniffi_meta::Type::CallbackInterface { module_path, name }) => {
-                        Ok(Type::Trait {
-                            module_path: module_path.clone(),
-                            name: name.clone(),
-                            export_ty: TraitExportType::CallbackInterface,
-                        })
-                    }
-                    _ => Err(Error::new(self.file_id(), ty.span(), ExpectedTrait)),
+                if let Some(type_closure) = maybe_resolve_closure(self, ir, cache, ty_trait)? {
+                    Ok(Type::Closure(type_closure))
+                } else {
+                    resolve_trait_obj(self, ir, cache, ty, ty_trait)
                 }
             }
             _ => Err(Error::new(self.file_id(), ty.span(), InvalidType)),
         }
+    }
+}
+
+fn resolve_trait_obj<'ir>(
+    item_path: &RPath<'ir>,
+    ir: &'ir Ir,
+    cache: &mut LookupCache<'ir>,
+    ty: &syn::Type,
+    ty_trait: &TypeTraitObject,
+) -> Result<Type> {
+    let trait_bounds = ty_trait
+        .bounds
+        .iter()
+        .filter_map(|param_bound| match param_bound {
+            TypeParamBound::Trait(trait_bound) => Some(&trait_bound.path),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if trait_bounds.len() != 1 {
+        return Err(Error::new(item_path.file_id(), ty.span(), InvalidDynTrait));
+    }
+    let trait_path = item_path.resolve(ir, cache, trait_bounds[0], Namespace::Type)?;
+    match trait_path.item()? {
+        Item::Trait(tr) => {
+            // Use the trait's own public path, not the referencing module's —
+            // the reference must match the metadata generated for the trait's
+            // definition, which may live in another module or crate.
+            let names = trait_path.public_path_to_item(ir, cache)?;
+            Ok(Type::Trait {
+                module_path: names.module_path,
+                name: names.name,
+                export_ty: tr.attrs.export_ty,
+            })
+        }
+        Item::Udl(uniffi_meta::Type::Object {
+            module_path,
+            name,
+            imp: ObjectImpl::Trait(TraitKind::RustOnly),
+        }) => Ok(Type::Trait {
+            module_path: module_path.clone(),
+            name: name.clone(),
+            export_ty: TraitExportType::TraitInterface(TraitKind::RustOnly),
+        }),
+        Item::Udl(uniffi_meta::Type::Object {
+            module_path,
+            name,
+            imp: ObjectImpl::Trait(TraitKind::ForeignOnly),
+        }) => Ok(Type::Trait {
+            module_path: module_path.clone(),
+            name: name.clone(),
+            export_ty: TraitExportType::TraitInterface(TraitKind::ForeignOnly),
+        }),
+        Item::Udl(uniffi_meta::Type::Object {
+            module_path,
+            name,
+            imp: ObjectImpl::Trait(TraitKind::Both),
+        }) => Ok(Type::Trait {
+            module_path: module_path.clone(),
+            name: name.clone(),
+            export_ty: TraitExportType::TraitInterface(TraitKind::Both),
+        }),
+        Item::Udl(uniffi_meta::Type::CallbackInterface { module_path, name }) => Ok(Type::Trait {
+            module_path: module_path.clone(),
+            name: name.clone(),
+            export_ty: TraitExportType::CallbackInterface,
+        }),
+        _ => Err(Error::new(item_path.file_id(), ty.span(), ExpectedTrait)),
     }
 }
 
@@ -789,6 +839,8 @@ impl<'a> GenericArgs<'a> {
 
 #[cfg(test)]
 pub mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::{paths::tests::path_for_module, CompileEnv, ErrorKind};
     use uniffi_meta::{ObjectImpl, TraitKind};
@@ -1933,6 +1985,162 @@ pub mod tests {
                 name: "Guid".into(),
                 builtin: Box::new(uniffi_meta::Type::UInt64),
             })
+        );
+    }
+
+    #[test]
+    fn test_closures() {
+        let ir = Ir::new_for_test(&["closures"]);
+        let mut cache = LookupCache::default();
+        assert_matches!(
+            run_resolve_uniffi_meta_type(
+                &ir,
+                &mut cache,
+                "closures",
+                "::std::sync::Arc<dyn Fn(u8) -> String + Sync + Send>",
+                None,
+            )
+            .unwrap(),
+            uniffi_meta::Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } if argument_types == [uniffi_meta::Type::UInt8]
+                && return_type == Some(Box::new(uniffi_meta::Type::String))
+                && throws_type.is_none()
+        );
+        assert_matches!(
+            run_resolve_uniffi_meta_type(
+                &ir,
+                &mut cache,
+                "closures",
+                "::std::sync::Arc<dyn Fn(u8) + Sync + Send>",
+                None,
+            )
+            .unwrap(),
+            uniffi_meta::Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } if argument_types == [uniffi_meta::Type::UInt8]
+                && return_type.is_none()
+                && throws_type.is_none()
+        );
+
+        assert_matches!(
+            run_resolve_uniffi_meta_type(
+                &ir,
+                &mut cache,
+                "closures",
+                "::std::sync::Arc<dyn Fn(u8) -> Result<String, TestError> + Sync + Send>",
+                None,
+            )
+            .unwrap(),
+            uniffi_meta::Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } if argument_types == [uniffi_meta::Type::UInt8]
+                && return_type == Some(Box::new(uniffi_meta::Type::String))
+                && throws_type == Some(Box::new(uniffi_meta::Type::Enum {
+                    module_path: "closures".to_string(),
+                    name: "TestError".to_string(),
+                }))
+        );
+        assert_matches!(
+            run_resolve_uniffi_meta_type(
+                &ir,
+                &mut cache,
+                "closures",
+                "::std::sync::Arc<dyn std::ops::Fn(u8) -> String + Sync + Send>",
+                None,
+            )
+            .unwrap(),
+            uniffi_meta::Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } if argument_types == [uniffi_meta::Type::UInt8]
+                && return_type == Some(Box::new(uniffi_meta::Type::String))
+                && throws_type.is_none()
+        );
+    }
+
+    #[test]
+    fn test_closure_bound_requirements() {
+        let ir = Ir::new_for_test(&["closures"]);
+        let mut cache = LookupCache::default();
+        assert!(run_resolve_uniffi_meta_type(
+            &ir,
+            &mut cache,
+            "closures",
+            "::std::sync::Arc<dyn Fn(u8) -> String>",
+            None,
+        )
+        .is_err());
+        assert!(run_resolve_uniffi_meta_type(
+            &ir,
+            &mut cache,
+            "closures",
+            "::std::sync::Arc<dyn Fn(u8) -> String + Send>",
+            None,
+        )
+        .is_err());
+        assert!(run_resolve_uniffi_meta_type(
+            &ir,
+            &mut cache,
+            "closures",
+            "::std::sync::Arc<dyn Fn(u8) -> String + Sync>",
+            None,
+        )
+        .is_err());
+        assert!(run_resolve_uniffi_meta_type(
+            &ir,
+            &mut cache,
+            "closures",
+            "::std::sync::Arc<dyn Fn(u8) -> String + 'a + Send + Sync>",
+            None,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_closures_through_types_aliases() {
+        let ir = Ir::new_for_test(&["closures"]);
+        let mut cache = LookupCache::default();
+        assert_matches!(
+            run_resolve_uniffi_meta_type(
+                &ir,
+                &mut cache,
+                "closures",
+                "ArcDynFn",
+                None,
+            )
+            .unwrap(),
+            uniffi_meta::Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } if argument_types == [uniffi_meta::Type::UInt8]
+                && return_type.is_none()
+                && throws_type.is_none()
+        );
+        assert_matches!(
+            run_resolve_uniffi_meta_type(
+                &ir,
+                &mut cache,
+                "closures",
+                "Arc<DynFn>",
+                None,
+            )
+            .unwrap(),
+            uniffi_meta::Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } if argument_types == [uniffi_meta::Type::UInt8]
+                && return_type.is_none()
+                && throws_type.is_none()
         );
     }
 }

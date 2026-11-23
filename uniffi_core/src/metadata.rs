@@ -70,6 +70,7 @@ pub mod codes {
     pub const TYPE_TRAIT_INTERFACE: u8 = 24;
     pub const TYPE_BOX: u8 = 26;
     pub const TYPE_HASH_SET: u8 = 27;
+    pub const TYPE_CLOSURE: u8 = 28;
     pub const TYPE_UNIT: u8 = 255;
 
     // TraitKind sub-codes.

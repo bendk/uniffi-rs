@@ -144,6 +144,11 @@ pub enum Type {
         name: String,
         builtin: Box<Type>,
     },
+    Closure {
+        argument_types: Vec<Type>,
+        return_type: Option<Box<Type>>,
+        throws_type: Option<Box<Type>>,
+    },
 }
 
 impl Type {
@@ -163,6 +168,17 @@ impl Type {
                 value_type,
             } => Box::new(key_type.iter_types().chain(value_type.iter_types())),
             Type::Custom { builtin, .. } => builtin.iter_types(),
+            Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } => Box::new(
+                argument_types
+                    .iter()
+                    .flat_map(|a| a.iter_types())
+                    .chain(return_type.iter().flat_map(|ty| ty.iter_types()))
+                    .chain(throws_type.iter().flat_map(|ty| ty.iter_types())),
+            ),
             _ => Box::new(std::iter::empty()),
         }
     }
@@ -228,6 +244,21 @@ impl Type {
             }
             Type::Custom { builtin, .. } => {
                 builtin.rename_recursive(name_transformer);
+            }
+            Type::Closure {
+                argument_types,
+                return_type,
+                throws_type,
+            } => {
+                for ty in argument_types {
+                    ty.rename_recursive(name_transformer);
+                }
+                if let Some(ty) = return_type {
+                    ty.rename_recursive(name_transformer);
+                }
+                if let Some(ty) = throws_type {
+                    ty.rename_recursive(name_transformer);
+                }
             }
             _ => {}
         }

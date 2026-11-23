@@ -190,6 +190,22 @@ fn normalize_type_module_path(ty: &Type) -> Type {
             name: name.clone(),
             builtin: Box::new(normalize_type_module_path(builtin)),
         },
+        Type::Closure {
+            argument_types,
+            return_type,
+            throws_type,
+        } => Type::Closure {
+            argument_types: argument_types
+                .iter()
+                .map(normalize_type_module_path)
+                .collect(),
+            return_type: return_type
+                .as_deref()
+                .map(|ty| Box::new(normalize_type_module_path(ty))),
+            throws_type: throws_type
+                .as_deref()
+                .map(|ty| Box::new(normalize_type_module_path(ty))),
+        },
         Type::Box { inner_type } => normalize_type_module_path(inner_type),
     }
 }

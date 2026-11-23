@@ -122,6 +122,8 @@ impl From<&Type> for FfiType {
             Type::Bytes => FfiType::RustBuffer(None),
             // Objects are pointers to an Arc<>
             Type::Object { .. } => FfiType::Handle,
+            // Closures as well
+            Type::Closure { .. } => FfiType::Handle,
             // Callback interfaces are passed as opaque integer handles.
             Type::CallbackInterface { .. } => FfiType::UInt64,
             // Other types are serialized into a bytebuffer and deserialized on the other side.
